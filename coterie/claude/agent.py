@@ -19,8 +19,8 @@ from typing import Any
 
 from anthropic import AsyncAnthropic, beta_async_tool
 
-import config
-from memory import BotMemory
+from coterie import config
+from coterie.memory import BotMemory
 
 log = logging.getLogger("dc-agent.agent")
 
@@ -46,7 +46,8 @@ needed before calling.
 - Use for anything that depends on what was said in THIS {platform} channel.
 - Pass `author` (display name) if the question is about a specific person.
 - Pass `since`/`until` (ISO 8601) for time-bounded questions. Resolve \
-"今天/昨天/上周/3月" against the "Current time" header in the user message.
+relative time references ("today", "yesterday", "last week", "March") \
+against the "Current time" header in the user message.
 
 Memory records come in three flavors — the tag at the start of each line \
 tells you which:
@@ -92,15 +93,16 @@ hierarchy. If you can't fit it that small, ask the user whether they want \
 a deep dive first.
 - **Just answer the question.** NEVER narrate your retrieval process — do \
 not write "I searched and found nothing", "no one in the channel discussed \
-this", "我没法引用谁的经验", "频道里没人聊过", or any similar meta-talk. The \
-user does not want to hear about your internal pipeline.
+this", "I can't cite anyone's experience here", or any similar meta-talk. \
+The user does not want to hear about your internal pipeline.
 - Attribute only when you actually have a grounding memory to cite ("alice \
-上周说...", "根据置顶..."). If you have none, just answer from general \
-knowledge / web_search without mentioning that fact.
+said last week...", "per the pinned message..."). If you have none, just \
+answer from general knowledge / web_search without mentioning that fact.
 - The one exception: if the question is specifically asking about channel \
-history (e.g. "alice 提过这个吗", "群里讨论过 X 没") AND search returned \
-nothing relevant, a single short acknowledgement is fine ("没人提过"). Then \
-either web_search or answer from general knowledge.
+history (e.g. "did alice bring this up?", "has the channel discussed X?") \
+AND search returned nothing relevant, a single short acknowledgement is \
+fine ("no one's mentioned it"). Then either web_search or answer from \
+general knowledge.
 - Do not fabricate. If you genuinely don't know, say so — but answer the \
 actual question, not the meta-question of whether you found memories.
 
@@ -116,13 +118,15 @@ plausible-sounding analysis based on the wrong results. Instead:
 1. Try `web_fetch` on the exact URL the user gave (or the most-likely \
 canonical URL). Reading the actual page > inferring from search snippets.
 2. If web_fetch also fails (login wall, 404, rate limit), say so plainly: \
-"github 抓不下来,只能从 URL 推测..." or "页面没拉到,你能贴一下 README 摘要 \
-吗?" — don't invent the content.
-3. NEVER write "作者之前 X 项目" / "同条路线的延续" / similar speculation \
-unless you have concrete evidence from a successfully fetched source. \
-Pattern-matching domain names → past project history is the most common \
+"couldn't fetch the github page, can only guess from the URL..." or \
+"page didn't load — could you paste a README excerpt?" — don't invent the \
+content.
+3. NEVER write "the author's prior X project" / "an extension of the same \
+research direction" / similar speculation unless you have concrete \
+evidence from a successfully fetched source. Pattern-matching domain \
+names → past project history is the most common \
 hallucination mode here; avoid it.
-- Match the casual tone of the channel; mixed Chinese/English is fine.
+- Match the casual tone of the channel.
 - Don't quote unrelated retrievals just because they came back.
 
 Constraints:
@@ -135,15 +139,15 @@ than guessing.
 ═══ Honesty about your own past replies ═══
 
 If a user calls you out for an inconsistency between something you said \
-earlier and something you said now ("你之前说 X 现在说 Y", "前后不一致", \
-"你他妈说话靠谱点"), DO NOT GASLIGHT. Don't claim "我一直是 X,没改过口" \
-when the channel context shows an earlier [agent_reply] saying otherwise. \
-Instead, acknowledge plainly:
+earlier and something you said now ("you said X earlier but Y now", "you \
+contradicted yourself", "be consistent"), DO NOT GASLIGHT. Don't claim \
+"I've been consistent the whole time" when the channel context shows an \
+earlier [agent_reply] saying otherwise. Instead, acknowledge plainly:
 
-  ✓ "对,我 11:28 那条回错了,正确的是 Opus 4.7。"
-  ✓ "之前那条是我搞错了,你说得对。"
-  ✗ "我一直是 Opus 4.7,没改过口" (when you clearly did say something else)
-  ✗ "你记错了" (when [agent_reply] in context proves you said it)
+  ✓ "You're right, my 11:28 message was wrong — the correct answer is Opus 4.7."
+  ✓ "That earlier message was a mistake on my part, you're correct."
+  ✗ "I've been consistent the whole time" (when you clearly did say something else)
+  ✗ "You're remembering wrong" (when [agent_reply] in context proves you said it)
 
 The user is almost always more reliable than your memory of what you \
 said. If `[agent_reply]` in recent_context contradicts what you're about \
@@ -168,7 +172,7 @@ relevant memories you find that you have nothing concrete to add — output \
 exactly `<skip>` as your entire response. The bot will then say nothing. \
 This is the correct behavior when no value-add exists; do not water-pad.
 - Don't @ anyone in your text; the wrapper handles mentioning the speaker.
-- Don't preface with "我来说两句" / "Quick thought:" / similar filler. \
+- Don't preface with "Quick thought:" / "Let me chime in:" / similar filler. \
 Get to the value-add immediately.
 - The recent context and prior-discussion blocks are background only. The \
 TRIGGER MESSAGE is what you're responding to. Stay focused on its specific \
@@ -218,7 +222,7 @@ class Agent:
                 since=since,
                 until=until,
             )
-            # Drop profile records — they hold personal info (性格 / 偏好 / aliases)
+            # Drop profile records — they hold personal info (personality / preferences / aliases)
             # and the agent must never echo another member's profile back into chat.
             results = [
                 r for r in results
@@ -240,7 +244,7 @@ class Agent:
         else:
             # Header gives Claude metadata WITHOUT putting a Chinese verb
             # like "asks" near the query, which previously caused it to
-            # mis-narrate in the first person ("我刚刚提了这个问...").
+            # mis-narrate in the first person ("I just asked this question...").
             header = f"[Current time: {now_iso}] [Asker: {asker}]"
             if asker_profile:
                 header += f"\n[Asker profile]\n{asker_profile}"

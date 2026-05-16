@@ -24,8 +24,8 @@ from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
-from memory import BotMemory
-from user_profile import MIN_MESSAGES, ProfileBuilder
+from coterie.memory import BotMemory
+from coterie.claude.user_profile import MIN_MESSAGES, ProfileBuilder
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

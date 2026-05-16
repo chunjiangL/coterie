@@ -13,17 +13,17 @@ import asyncio
 import os
 import uuid
 
-from memory import BotMemory
+from coterie.memory import BotMemory
 
 # Fresh partition every run so we don't accumulate duplicate test memories
 TEST_CHANNEL = f"verify-{uuid.uuid4().hex[:8]}"
 
 SEED = [
     # (author, timestamp ISO, content)
-    ("alice", "2026-05-01T10:00:00+00:00", "macOS 26 已经升级好了，体验不错"),
-    ("alice", "2026-05-10T14:30:00+00:00", "python 3.14 比 3.12 快了大概 15%"),
-    ("bob",   "2026-05-01T11:00:00+00:00", "fly.io 部署完了，免费档够用"),
-    ("bob",   "2026-05-11T09:00:00+00:00", "今天读了一篇关于 RAG 的论文"),
+    ("alice", "2026-05-01T10:00:00+00:00", "macOS 26 upgrade done, feels nice"),
+    ("alice", "2026-05-10T14:30:00+00:00", "python 3.14 is about 15% faster than 3.12"),
+    ("bob",   "2026-05-01T11:00:00+00:00", "deployed on fly.io, the free tier is enough"),
+    ("bob",   "2026-05-11T09:00:00+00:00", "read a paper on RAG today"),
 ]
 
 
@@ -59,10 +59,10 @@ async def main() -> None:
     for label, filters in cases:
         print()
         print("-" * 60)
-        print(f"QUERY: '操作系统'  filters={filters}")
+        print(f"QUERY: 'os/language/deploy'  filters={filters}")
         print(f"CASE: {label}")
         print("-" * 60)
-        results = await m.search(query="操作系统 或 编程语言 或 部署", channel_id=TEST_CHANNEL, limit=10, **filters)
+        results = await m.search(query="operating system OR programming language OR deployment", channel_id=TEST_CHANNEL, limit=10, **filters)
         if not results:
             print("  (no results)")
             continue

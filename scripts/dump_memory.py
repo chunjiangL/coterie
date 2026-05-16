@@ -9,7 +9,7 @@ Mode on in User Settings → Advanced) → Copy Channel ID.
 
 import sys
 
-from memory import BotMemory
+from coterie.memory import BotMemory
 
 
 def main() -> None:

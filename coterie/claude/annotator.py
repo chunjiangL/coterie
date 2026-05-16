@@ -8,7 +8,7 @@ window and produce English context annotations for the un-annotated subset.
 Annotations are stored as independent Mem0 records (record_type=annotation),
 linked back via references_message_ids in metadata. They get their own
 embedding, so retrieval can match either the raw message or its annotation
-("那个 deploy" can match "fly.io deployment" through the annotation).
+("the deploy thing" can match "fly.io deployment" through the annotation).
 
 The annotator agent has its own `search_memories` tool — Sonnet can pull
 older context out of Mem0 when the 100-msg window doesn't reach far enough
@@ -26,9 +26,9 @@ from typing import Any
 
 from anthropic import AsyncAnthropic, beta_async_tool
 
-import config
-from agent import _strip_legacy_author_prefix, log_message_blocks
-from memory import BotMemory
+from coterie import config
+from coterie.claude.agent import _strip_legacy_author_prefix, log_message_blocks
+from coterie.memory import BotMemory
 
 log = logging.getLogger("dc-agent.annotator")
 
@@ -42,17 +42,17 @@ semantic retrieval. You'll see a window of recent channel messages. Some are \
 marked [NEW] — your job is to produce one short English annotation for each \
 non-trivial [NEW] message. Messages marked [BOT] are the bot's own prior \
 replies — use them as context to interpret human messages (e.g. resolve \
-"对" / "好的" / "okay" against what the bot just said) but DO NOT annotate \
+"yeah" / "ok" / "okay" against what the bot just said) but DO NOT annotate \
 them.
 
 Each annotation should:
 
-1. Resolve pronouns and implicit references (那个 → the specific thing).
+1. Resolve pronouns and implicit references ("that one" → the specific thing).
 2. Name the people / products / topics mentioned.
 3. Capture intent if non-obvious.
 
 For trivial messages — greetings, reactions ("+1", "lol", single emoji, \
-"yes" / "好的"), one-word replies — OMIT them from your output entirely.
+"yes" / "ok"), one-word replies — OMIT them from your output entirely.
 
 If a [NEW] message references a topic clearly older than the visible window, \
 call `search_memories` to look it up before annotating. Use the timestamps \
@@ -112,7 +112,7 @@ class Annotator:
             "content": content,
             "timestamp": timestamp_iso,
             # Bot's own replies enter the window as context (so user
-            # follow-ups like "好的" / "对" can be resolved against them)
+            # follow-ups like "ok" / "yeah" can be resolved against them)
             # but are pre-marked annotated so they neither trigger the
             # batch threshold nor get sent for annotation themselves.
             "annotated": is_bot_reply,

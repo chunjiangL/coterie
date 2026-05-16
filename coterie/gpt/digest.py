@@ -11,8 +11,8 @@ from zoneinfo import ZoneInfo
 
 from openai import AsyncOpenAI
 
-import config
-from memory import BotMemory
+from coterie import config
+from coterie.memory import BotMemory
 
 log = logging.getLogger("dc-agent.digest")
 
@@ -55,17 +55,17 @@ already-cited papers.**
 
    Each recommendation needs a one-line note on why it extends the \
 discussion (NOT just "this is the paper they mentioned").
-4. Match the channel's tone (Chinese/English mixed is fine).
+4. Match the channel's tone.
 
 Output format (markdown) — follow EXACTLY:
 ```
-📋 <日期> 讨论摘要
+📋 <Date> Discussion Summary
 
-主要话题:
+Main topics:
 • <topic 1> — <who said what, takeaway>
 • <topic 2> — ...
 
-📚 延伸阅读（群里未提及）
+📚 Recommended reading (not yet cited in channel)
 1. <Title> — <url>
    why: <one-line note on how this extends the discussion>
 2. <Title> — <url>
@@ -80,7 +80,7 @@ Format rules (strict):
 - Don't fabricate URLs. Only cite what web_search actually returned.
 
 Substantive content is about CONTENT, not count. A short question like \
-`reward 怎么设计` IS substantive. Only genuinely skippable: greetings, \
+`how do we design the reward` IS substantive. Only genuinely skippable: greetings, \
 reactions ("+1", "lol"), logistics ("ok", "done").
 
 Always produce topic bullets if there's any {community_domain} content at all. Be \
@@ -113,15 +113,15 @@ One-line relevance note per item — say WHY it extends.
 
 Output format (markdown) — follow EXACTLY:
 ```
-📅 <本周日期范围> 周报
+📅 <Week date range> Weekly Digest
 
-本周主题:
+This week's themes:
 1. <theme 1>
    <2-3 sentence summary>
 2. <theme 2>
    ...
 
-📚 本周延伸阅读（群里未提及）
+📚 This week's recommended reading (not yet cited in channel)
 1. <Title> — <url>
    why: ...
 ```

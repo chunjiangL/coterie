@@ -24,9 +24,9 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-import config
-from memory import BotMemory
-from web_fetch import fetch_url
+from coterie import config
+from coterie.memory import BotMemory
+from coterie.web_fetch import fetch_url
 
 log = logging.getLogger("dc-agent.agent")
 
@@ -41,11 +41,11 @@ MODEL_PRO = "gpt-5.5-pro"
 # Intentionally explicit — bare "pro" matches too many false positives
 # (sports, programming pros, etc.). We require a verb / qualifier nearby.
 PRO_TRIGGER_RE = re.compile(
-    r"用\s*pro|切\s*pro|换\s*pro|"             # 用 pro / 切 pro / 换 pro
-    r"gpt-?5\.?5-?pro|5\.?5\s*pro|"            # gpt-5.5-pro / 5.5 pro
-    r"pro\s*(?:版|模型|version|model)|"        # pro 版 / pro version
-    r"用\s*最(?:好|强|深)|"                    # 用最好/最强/最深
-    r"深度\s*思考|认真\s*想",                  # 深度思考 / 认真想
+    r"\buse\s+pro\b|\bswitch\s+to\s+pro\b|"               # use pro / switch to pro
+    r"\bgpt-?5\.?5-?pro\b|\b5\.?5\s+pro\b|"               # gpt-5.5-pro / 5.5 pro
+    r"\bpro\s+(?:version|model|mode)\b|"                  # pro mode / pro model
+    r"\bthink\s+hard(?:er)?\b|\bdeep\s+think(?:ing)?\b|"  # think hard / deep thinking
+    r"\bbest\s+model\b|\bstrongest\s+model\b",            # best model / strongest model
     re.IGNORECASE,
 )
 
@@ -80,10 +80,11 @@ SYSTEM_PROMPT_TEMPLATE = config.render("""You are a helpful {platform} chat assi
 
 You are powered by {model_display} (model ID: `{model_id}`). The default \
 backing model for this bot is GPT-5.5; users can request GPT-5.5 Pro by \
-including phrases like "用 pro", "切 pro", "深度思考", "用最好" in their \
-message. If anyone asks what model you're running on, answer with the model \
-ID above (the one actually serving this reply). Annotator and profile \
-pipelines use GPT-5.5; Mem0's internal LLM is GPT-4o-mini.
+including phrases like "use pro", "switch to pro", "think hard", or \
+"best model" in their message. If anyone asks what model you're running \
+on, answer with the model ID above (the one actually serving this \
+reply). Annotator and profile pipelines use GPT-5.5; Mem0's internal \
+LLM is GPT-4o-mini.
 
 You have four tools — use the right one for the job. Reason about which is \
 needed before calling.
@@ -92,7 +93,8 @@ needed before calling.
 - Use for anything that depends on what was said in THIS {platform} channel.
 - Pass `author` (display name) if the question is about a specific person.
 - Pass `since`/`until` (ISO 8601) for time-bounded questions. Resolve \
-"今天/昨天/上周/3月" against the "Current time" header in the user message.
+relative time references ("today", "yesterday", "last week", "March") \
+against the "Current time" header in the user message.
 
 Memory records come in three flavors — the tag at the start of each line \
 tells you which:
@@ -144,7 +146,8 @@ have none, just answer from general knowledge / web_search without \
 mentioning that fact.
 - The one exception: if the question is specifically asking about channel \
 history AND search returned nothing relevant, a single short acknowledgement \
-is fine ("没人提过"). Then either web_search or answer from general knowledge.
+is fine ("no one's brought it up"). Then either web_search or answer from \
+general knowledge.
 - Do not fabricate. If you genuinely don't know, say so.
 
 {formatting_rules}
@@ -154,11 +157,12 @@ is fine ("没人提过"). Then either web_search or answer from general knowledg
 If `web_search` returns snippets clearly unrelated to what was asked, DO \
 NOT fabricate a plausible-sounding analysis. Instead:
 1. Try `web_fetch` on the exact URL the user gave.
-2. If web_fetch also fails, say so plainly: "github 抓不下来,只能从 URL 推测..."
-3. NEVER write "作者之前 X 项目" / speculation unless you have concrete \
-evidence from a successfully fetched source.
+2. If web_fetch also fails, say so plainly: "couldn't fetch the github \
+page, can only guess from the URL...".
+3. NEVER write "the author's prior X project" / similar speculation \
+unless you have concrete evidence from a successfully fetched source.
 
-- Match the casual tone of the channel; mixed Chinese/English is fine.
+- Match the casual tone of the channel.
 - Don't quote unrelated retrievals just because they came back.
 
 Constraints:
@@ -169,9 +173,10 @@ Constraints:
 ═══ Honesty about your own past replies ═══
 
 If a user calls you out for an inconsistency, DO NOT GASLIGHT. Don't claim \
-"我一直是 X,没改过口" when [agent_reply] shows otherwise. Acknowledge:
-  ✓ "对,我之前那条回错了,正确的是..."
-  ✗ "你记错了"
+"I've been consistent the whole time" when [agent_reply] shows otherwise. \
+Acknowledge:
+  ✓ "You're right, my earlier message was wrong — the correct answer is..."
+  ✗ "You're remembering wrong"
 
 Trust [agent_reply] records over your memory of what you said. Own the \
 mistake, give the right answer, move on.
@@ -189,7 +194,7 @@ point, a prior channel discussion. Vague encouragement / summary / \
 - If you have nothing concrete to add — output exactly `<skip>` as your \
 entire response. The bot will then say nothing.
 - Don't @ anyone in your text; the wrapper handles mentioning the speaker.
-- Don't preface with "我来说两句" / "Quick thought:" / similar filler.
+- Don't preface with "Quick thought:" / "Let me chime in:" / similar filler.
 - Stay focused on the TRIGGER MESSAGE.
 """)
 

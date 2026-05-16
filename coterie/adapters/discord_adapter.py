@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 # memory.py (Mem0's internal LLM picks anthropic vs openai by env).
 load_dotenv()
 
-from backends import BACKEND, Agent, Annotator, Digest, ProactiveClassifier, ProfileBuilder
-from memory import BotMemory
+from coterie.backends import BACKEND, Agent, Annotator, Digest, ProactiveClassifier, ProfileBuilder
+from coterie.memory import BotMemory
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("dc-agent")
 
@@ -66,7 +66,7 @@ PROACTIVE_SERVERS: set[str] = _csv_set("PROACTIVE_SERVERS")
 # Feature toggles. Default ON (legacy behavior).
 # PROFILES: build + auto-refresh per-user profile from message history.
 # Off → @ replies see no asker_profile, proactive classifier has no
-# `Bot 互动偏好` signal, profile_refresh_tick doesn't start.
+# `Bot interaction preference` signal, profile_refresh_tick doesn't start.
 PROFILES_ENABLED: bool = _bool_env("PROFILES_ENABLED", default=True)
 # ANNOTATOR: sliding-window LLM-generated English annotations of messages.
 # Off → annotator_tick doesn't start (no LLM calls), but the in-memory
@@ -356,9 +356,9 @@ async def on_ready() -> None:
         # Pull constants from the backend's proactive module without
         # hardcoding either implementation here.
         if BACKEND == "openai":
-            from proactive_openai import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
+            from coterie.gpt.proactive import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
         else:
-            from proactive import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
+            from coterie.claude.proactive import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
         log.info(
             "proactive: enabled channels=%s servers=%s (debounce=%ss cooldown=%ss, same-asker bypass)",
             sorted(PROACTIVE_CHANNELS), sorted(PROACTIVE_SERVERS),
@@ -390,7 +390,7 @@ async def on_ready() -> None:
 async def on_message(message: discord.Message) -> None:
     # Filter OTHER bots only; keep our own replies so the channel record is
     # complete and the annotator window has context for user follow-ups
-    # ("好的" / "对" against what the bot just said).
+    # ("ok" / "yeah" against what the bot just said).
     is_self = client.user is not None and message.author.id == client.user.id
     if message.author.bot and not is_self:
         return
@@ -455,7 +455,7 @@ async def on_message(message: discord.Message) -> None:
     if not query and not pdf_attachments:
         return
     if not query and pdf_attachments:
-        query = "请看一下这个附件。"
+        query = "Please take a look at this attachment."
 
     attachments_payload = await _build_attachment_blocks(pdf_attachments)
 
@@ -479,7 +479,7 @@ async def on_message(message: discord.Message) -> None:
             )
         except Exception:
             log.exception("agent failed")
-            await message.reply("出错了，看看 bot log 吧。")
+            await message.reply("Something went wrong — check the bot log.")
             return
 
     await _send_reply(message, reply_text, files)
@@ -519,7 +519,7 @@ async def _send_reply(
         discord.File(io.BytesIO(data), filename=name) for name, data in files
     ]
     if not text and not discord_files:
-        await message.reply("(空回复)")
+        await message.reply("(empty reply)")
         return
 
     # Discord caps replies at 2000 chars; chunk the text. Files attach to the
@@ -531,8 +531,13 @@ async def _send_reply(
         await message.reply(chunk)
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point for the ``coterie-discord`` console script."""
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         raise SystemExit("DISCORD_TOKEN not set (copy .env.example to .env)")
     client.run(token)
+
+
+if __name__ == "__main__":
+    main()

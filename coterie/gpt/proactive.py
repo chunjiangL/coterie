@@ -13,7 +13,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-import config
+from coterie import config
 
 log = logging.getLogger("dc-agent.proactive")
 
@@ -50,15 +50,16 @@ echo / summary / general encouragement.
 
 ═══ Speaker preference override (strong signal) ═══
 
-The speaker's profile may include a `Bot 互动偏好` line. Respect it:
-- "希望 bot 主动参与" → on borderline cases, lean fire=true.
-- "只在被 @ 时回复" / "讨厌 bot 插话" → fire=false unless the trigger is \
-exceptionally substantive.
+The speaker's profile may include a `Bot interaction preference` line. \
+Respect it:
+- "wants bot to participate proactively" → on borderline cases, lean fire=true.
+- "only respond when @-ed" / "dislikes bot interrupting" → fire=false \
+unless the trigger is exceptionally substantive.
 - No preference → judge purely on the 6 criteria above.
 
 If fire=true, also emit `search_query`: a 3-10 word query targeting the \
 SUBSTANTIVE topic (English + technical jargon preferred). E.g. trigger = \
-"8 node 不够 不能一个 node 一个 expert" → search_query = "Qwen MoE \
+"8 nodes aren't enough — can't do one expert per node" → search_query = "Qwen MoE \
 post-training expert parallelism node count".
 
 For a bare link, infer the topic from the URL itself + ANY hint in the \

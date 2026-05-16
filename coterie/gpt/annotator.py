@@ -15,8 +15,8 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-import config
-from memory import BotMemory
+from coterie import config
+from coterie.memory import BotMemory
 
 log = logging.getLogger("dc-agent.annotator")
 

@@ -35,9 +35,9 @@ from typing import Any
 
 from anthropic import AsyncAnthropic
 
-import config
-from agent import _strip_legacy_author_prefix
-from memory import BotMemory
+from coterie import config
+from coterie.claude.agent import _strip_legacy_author_prefix
+from coterie.memory import BotMemory
 
 log = logging.getLogger("dc-agent.proactive")
 
@@ -69,29 +69,31 @@ contrarian point, prior context from this channel that's relevant. NOT \
 echo / summary / general encouragement.
 3. The trigger was NOT already answered in the recent context (someone \
 just gave the answer 1-2 msgs ago → skip).
-4. The trigger is NOT about the bot itself (e.g. "isaac 你怎么不主动", \
-"bot 烦死了", meta-complaints about behavior). Those are for the people \
-to discuss, not for the bot to defend itself.
-5. The trigger is NOT pure chitchat / logistics / reactions ("吃了吗", \
-"+1", "好的", "拉进来了", emoji-only).
+4. The trigger is NOT about the bot itself (e.g. "why doesn't the bot \
+chime in more?", "bot is annoying", meta-complaints about behavior). \
+Those are for the people to discuss, not for the bot to defend itself.
+5. The trigger is NOT pure chitchat / logistics / reactions ("how are \
+you", "+1", "ok", "pulled them in", emoji-only).
 6. The trigger is NOT a non-{community_domain} link (random news article, meme, \
 unrelated tweet about food/politics/etc.). Use judgement on the URL domain \
 + the channel's {community_domain} focus.
 
 ═══ Speaker preference override (strong signal) ═══
 
-The speaker's profile may include a `Bot 互动偏好` line. Respect it:
-- "希望 bot 主动参与" → on borderline cases, lean fire=true. The user has \
-explicitly asked for proactive engagement.
-- "只在被 @ 时回复" / "讨厌 bot 插话" → fire=false unless the trigger is \
-exceptionally substantive (clear technical question that begs the bot's \
-specific channel memory). Default fire=false for this group; they will \
-@ when they want the bot.
-- No `Bot 互动偏好` line → judge purely on the 5 criteria above.
+The speaker's profile may include a `Bot interaction preference` line. \
+Respect it:
+- "wants bot to participate proactively" → on borderline cases, lean \
+fire=true. The user has explicitly asked for proactive engagement.
+- "only respond when @-ed" / "dislikes bot interrupting" → fire=false \
+unless the trigger is exceptionally substantive (clear technical \
+question that begs the bot's specific channel memory). Default \
+fire=false for this group; they will @ when they want the bot.
+- No `Bot interaction preference` line → judge purely on the 5 \
+criteria above.
 
 If fire=true, also emit `search_query`: a 3-10 word query targeting the \
 SUBSTANTIVE topic (English + technical jargon preferred). E.g. trigger = \
-"8 node 不够 不能一个 node 一个 expert" → search_query = "Qwen MoE \
+"8 nodes aren't enough — can't do one expert per node" → search_query = "Qwen MoE \
 post-training expert parallelism node count". The query is used to \
 retrieve related prior discussion from this channel's memory.
 

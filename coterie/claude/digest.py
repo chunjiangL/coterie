@@ -22,9 +22,9 @@ from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic
 
-import config
-from agent import _strip_legacy_author_prefix, log_message_blocks
-from memory import BotMemory
+from coterie import config
+from coterie.claude.agent import _strip_legacy_author_prefix, log_message_blocks
+from coterie.memory import BotMemory
 
 log = logging.getLogger("dc-agent.digest")
 
@@ -44,8 +44,8 @@ understand follow-up messages from humans, but do not summarize them.)
 
 Your job:
 1. Identify 2-5 main topics or threads from the [message] records. A \
-direct {community_domain} question someone @-ed the bot (e.g. "reward 怎么设计", \
-"<url> 这个的技术路线是什么") counts as its own topic — surface it by name \
+direct {community_domain} question someone @-ed the bot (e.g. "how do we design the reward", \
+"what is the technical approach in <url>") counts as its own topic — surface it by name \
 with who asked, even if it was a one-off question with no further \
 discussion. Don't roll those into a general theme.
 2. For each topic, write 1-2 sentences citing who said what and the key \
@@ -76,17 +76,17 @@ papers the group already named.**
 
    Each recommendation needs a one-line note on why it extends what was \
 discussed (NOT just "this is the paper they mentioned").
-4. Match the channel's tone (Chinese/English mixed is fine).
+4. Match the channel's tone.
 
 Output format (markdown) — follow EXACTLY:
 ```
-📋 <日期> 讨论摘要
+📋 <Date> Discussion Summary
 
-主要话题:
+Main topics:
 • <topic 1> — <who said what, takeaway>
 • <topic 2> — ...
 
-📚 延伸阅读（群里未提及）
+📚 Recommended reading (not yet cited in channel)
 1. <Title> — <url>
    why: <one-line note on how this extends the discussion>
 2. <Title> — <url>
@@ -104,10 +104,10 @@ adjacent material — DO NOT pad with already-cited papers.
 returned.
 
 Substantive content is about CONTENT, not count. A 4-character question like \
-`reward 怎么设计` IS substantive — it's a real {community_domain} question. Don't \
+`how do we design the reward` IS substantive — it's a real {community_domain} question. Don't \
 dismiss messages as trivial just because they're short. The only things \
 genuinely skippable: greetings ("hi"), reactions ("+1", "lol"), and pure \
-logistics ("ok", "done", "拉进来了").
+logistics ("ok", "done").
 
 Always produce topic bullets if there's any {community_domain} content at all. Only \
 say "no {community_domain} discussion this window" if literally every message was a \
@@ -129,7 +129,7 @@ summarization (they are not source material).
 Your job:
 1. Identify 3-7 themes across the week — group related threads even if they \
 spanned multiple days. A direct {community_domain} question someone @-ed the bot \
-(e.g. "reward 怎么设计", "<url> 这个的技术路线是什么") gets its own theme \
+(e.g. "how do we design the reward", "what is the technical approach in <url>") gets its own theme \
 named by the question — don't fold a specific question into a broader \
 theme. Surface it by name with who asked.
 2. For each theme, write 2-3 sentences: what was discussed, who drove it, \
@@ -156,15 +156,15 @@ the paper they mentioned".
 
 Output format (markdown) — follow EXACTLY:
 ```
-📅 <本周日期范围> 周报
+📅 <Week date range> Weekly Digest
 
-本周主题:
+This week's themes:
 1. <theme 1>
    <2-3 sentence summary>
 2. <theme 2>
    ...
 
-📚 本周延伸阅读（群里未提及）
+📚 This week's recommended reading (not yet cited in channel)
 1. <Title> — <url>
    why: <one-line note on how this extends the discussion>
 2. <Title> — <url>
@@ -180,9 +180,9 @@ found — DO NOT pad with already-cited papers.
 - Don't fabricate URLs or arxiv IDs.
 
 Substantive content is about CONTENT, not count. A short question like \
-`reward 怎么设计` IS substantive. Don't dismiss messages as trivial just \
+`how do we design the reward` IS substantive. Don't dismiss messages as trivial just \
 because they're short. Only genuinely skippable: greetings, reactions, \
-logistics ("ok", "done", "拉进来了").
+logistics ("ok", "done").
 
 Always produce theme bullets if there's any {community_domain} content at all. Only \
 say "no {community_domain} discussion this week" if literally everything was \

@@ -44,8 +44,8 @@ os.environ["PLATFORM"] = "slack"
 from slack_bolt.app.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
-from backends import BACKEND, Agent, Annotator, Digest, ProactiveClassifier, ProfileBuilder
-from memory import BotMemory
+from coterie.backends import BACKEND, Agent, Annotator, Digest, ProactiveClassifier, ProfileBuilder
+from coterie.memory import BotMemory
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("dc-agent.slack")
@@ -319,7 +319,7 @@ async def _handle_query(
         )
     except Exception:
         log.exception("agent.reply failed")
-        await say(text="出错了，看看 bot log 吧。", thread_ts=thread_ts)
+        await say(text="Something went wrong — check the bot log.", thread_ts=thread_ts)
         return
 
     # Chunked send into the same thread; first chunk carries any code_interpreter files.
@@ -335,7 +335,7 @@ async def _handle_query(
             except Exception:
                 log.exception("files_upload_v2 failed for %s", fname)
 
-    reply_text = (reply_text or "").strip() or "(空回复)"
+    reply_text = (reply_text or "").strip() or "(empty reply)"
     for i in range(0, len(reply_text), SLACK_REPLY_CHARS):
         await say(text=reply_text[i : i + SLACK_REPLY_CHARS], thread_ts=thread_ts)
 
@@ -535,9 +535,9 @@ async def _main() -> None:
              _BOT_USER_ID, auth.get("team"), BACKEND)
     if PROACTIVE_CHANNELS or PROACTIVE_SERVERS:
         if BACKEND == "openai":
-            from proactive_openai import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
+            from coterie.gpt.proactive import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
         else:
-            from proactive import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
+            from coterie.claude.proactive import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
         log.info(
             "proactive: enabled channels=%s teams=%s (debounce=%ss cooldown=%ss)",
             sorted(PROACTIVE_CHANNELS), sorted(PROACTIVE_SERVERS),
@@ -556,5 +556,10 @@ async def _main() -> None:
     await handler.start_async()
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point for the ``coterie-slack`` console script."""
     asyncio.run(_main())
+
+
+if __name__ == "__main__":
+    main()
