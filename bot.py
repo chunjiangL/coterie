@@ -33,17 +33,46 @@ def _csv_set(env_var: str) -> set[str]:
     return {x.strip() for x in os.environ.get(env_var, "").split(",") if x.strip()}
 
 
-# Channels that opt into the daily/weekly digest push. Comma-separated
-# channel IDs in env; unset = no digest channels.
-DIGEST_CHANNELS: set[str] = _csv_set("DIGEST_CHANNELS")
+def _bool_env(name: str, default: bool = True) -> bool:
+    """Parse a boolean env var. true/1/yes → True, anything else → False.
+    Missing var → default."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Daily-digest channels. Falls back to DIGEST_CHANNELS for backward compat
+# when DAILY_DIGEST_CHANNELS isn't explicitly set.
+DAILY_DIGEST_CHANNELS: set[str] = (
+    _csv_set("DAILY_DIGEST_CHANNELS") or _csv_set("DIGEST_CHANNELS")
+)
+# Weekly-digest channels. Falls back to DIGEST_CHANNELS too. Set this to a
+# different list than DAILY_DIGEST_CHANNELS to send weekly to a subset (or
+# superset) of where daily goes.
+WEEKLY_DIGEST_CHANNELS: set[str] = (
+    _csv_set("WEEKLY_DIGEST_CHANNELS") or _csv_set("DIGEST_CHANNELS")
+)
+# Union of both — used to decide whether to start digest ticks at all.
+DIGEST_CHANNELS: set[str] = DAILY_DIGEST_CHANNELS | WEEKLY_DIGEST_CHANNELS
+
 # Channels where the bot proactively jumps into research discussions.
 # Independent from DIGEST_CHANNELS — a channel can opt into one, both, or neither.
 PROACTIVE_CHANNELS: set[str] = _csv_set("PROACTIVE_CHANNELS")
 # Servers (Discord guilds) where the bot proactively participates in EVERY
-# text channel. Use this when you want "blanket on for the whole server"
-# without enumerating channel IDs as people add new ones. PROACTIVE_CHANNELS
-# still works as an explicit override for cross-server / extra channels.
+# text channel. PROACTIVE_CHANNELS works as an explicit override.
 PROACTIVE_SERVERS: set[str] = _csv_set("PROACTIVE_SERVERS")
+
+# Feature toggles. Default ON (legacy behavior).
+# PROFILES: build + auto-refresh per-user profile from message history.
+# Off → @ replies see no asker_profile, proactive classifier has no
+# `Bot 互动偏好` signal, profile_refresh_tick doesn't start.
+PROFILES_ENABLED: bool = _bool_env("PROFILES_ENABLED", default=True)
+# ANNOTATOR: sliding-window LLM-generated English annotations of messages.
+# Off → annotator_tick doesn't start (no LLM calls), but the in-memory
+# buffer keeps filling so proactive's recent_n() still works. Trade-off:
+# semantic search loses the annotation-layer surface (~half the recall lift).
+ANNOTATOR_ENABLED: bool = _bool_env("ANNOTATOR_ENABLED", default=True)
 
 LA = ZoneInfo("America/Los_Angeles")
 DIGEST_TIME = _dt.time(hour=9, minute=0, tzinfo=LA)
@@ -125,7 +154,7 @@ async def _run_daily_if_pending(now_la: _dt.datetime) -> None:
         return
     state = _load_digest_state()
     changed = False
-    for cid in DIGEST_CHANNELS:
+    for cid in DAILY_DIGEST_CHANNELS:
         ch = state.setdefault(cid, {})
         last_iso = ch.get("daily_last_run")
         if last_iso:
@@ -157,7 +186,7 @@ async def _run_weekly_if_pending(now_la: _dt.datetime) -> None:
         return  # Mon 0-9am, or not Monday at all
     state = _load_digest_state()
     changed = False
-    for cid in DIGEST_CHANNELS:
+    for cid in WEEKLY_DIGEST_CHANNELS:
         ch = state.setdefault(cid, {})
         last_iso = ch.get("weekly_last_run")
         if last_iso:
@@ -230,14 +259,15 @@ async def _proactive_dispatch(message: discord.Message) -> None:
 
     recent_msgs = annotator.recent_n(channel_id, n=10)
 
-    try:
-        asker_profile = await profile_builder.ensure(
-            channel_id=channel_id,
-            author=asker,
-        )
-    except Exception:
-        log.exception("proactive: profile lookup failed")
-        asker_profile = None
+    asker_profile: str | None = None
+    if PROFILES_ENABLED:
+        try:
+            asker_profile = await profile_builder.ensure(
+                channel_id=channel_id,
+                author=asker,
+            )
+        except Exception:
+            log.exception("proactive: profile lookup failed")
 
     decision = await proactive.evaluate(
         trigger_msg_text=message.content,
@@ -308,10 +338,20 @@ async def on_ready() -> None:
                     channel_id=str(channel.id),
                     message_id=str(msg.id),
                 )
-    if not annotator_tick.is_running():
-        annotator_tick.start()
-    if not profile_refresh_tick.is_running():
-        profile_refresh_tick.start()
+    if ANNOTATOR_ENABLED:
+        if not annotator_tick.is_running():
+            annotator_tick.start()
+        log.info("annotator: enabled (tick every 30s)")
+    else:
+        log.info("annotator: disabled by ANNOTATOR_ENABLED=false")
+
+    if PROFILES_ENABLED:
+        if not profile_refresh_tick.is_running():
+            profile_refresh_tick.start()
+        log.info("profiles: enabled (refresh tick every 10min)")
+    else:
+        log.info("profiles: disabled by PROFILES_ENABLED=false")
+
     if PROACTIVE_CHANNELS or PROACTIVE_SERVERS:
         # Pull constants from the backend's proactive module without
         # hardcoding either implementation here.
@@ -326,16 +366,24 @@ async def on_ready() -> None:
         )
     else:
         log.info("proactive: no PROACTIVE_CHANNELS/SERVERS env, disabled")
-    if DIGEST_CHANNELS:
-        log.info("digest: scheduled for channels %s at 9am LA", sorted(DIGEST_CHANNELS))
+
+    if DAILY_DIGEST_CHANNELS:
+        log.info("daily digest: channels=%s at 9am LA", sorted(DAILY_DIGEST_CHANNELS))
         if not daily_digest_tick.is_running():
             daily_digest_tick.start()
+    else:
+        log.info("daily digest: no DAILY_DIGEST_CHANNELS, disabled")
+    if WEEKLY_DIGEST_CHANNELS:
+        log.info(
+            "weekly digest: channels=%s Mon 9am LA", sorted(WEEKLY_DIGEST_CHANNELS)
+        )
         if not weekly_digest_tick.is_running():
             weekly_digest_tick.start()
+    else:
+        log.info("weekly digest: no WEEKLY_DIGEST_CHANNELS, disabled")
+    if DIGEST_CHANNELS:
         if not digest_catchup_tick.is_running():
             digest_catchup_tick.start()
-    else:
-        log.info("digest: no DIGEST_CHANNELS env, skipping schedule")
 
 
 @client.event
@@ -412,14 +460,15 @@ async def on_message(message: discord.Message) -> None:
     attachments_payload = await _build_attachment_blocks(pdf_attachments)
 
     async with message.channel.typing():
-        try:
-            asker_profile = await profile_builder.ensure(
-                channel_id=str(message.channel.id),
-                author=message.author.display_name,
-            )
-        except Exception:
-            log.exception("profile lookup failed")
-            asker_profile = None
+        asker_profile: str | None = None
+        if PROFILES_ENABLED:
+            try:
+                asker_profile = await profile_builder.ensure(
+                    channel_id=str(message.channel.id),
+                    author=message.author.display_name,
+                )
+            except Exception:
+                log.exception("profile lookup failed")
         try:
             reply_text, files = await agent.reply(
                 query=query,
