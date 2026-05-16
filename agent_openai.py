@@ -62,9 +62,18 @@ def _pick_model(query: str) -> str:
 def _system_prompt(model_id: str) -> str:
     """Substitute the model identity into the system prompt template, so the
     bot answers "what model are you" honestly for whichever model is serving
-    this particular reply."""
+    this particular reply.
+
+    Uses .replace() instead of str.format() so that ANY curly braces appearing
+    elsewhere in the prompt (LaTeX examples, JSON examples, etc.) pass through
+    unchanged. str.format() interprets every `{...}` as a placeholder, which
+    once blew up on `\\frac{}{}` in the Discord-formatting section."""
     display = "GPT-5.5 Pro" if model_id == MODEL_PRO else "GPT-5.5"
-    return SYSTEM_PROMPT_TEMPLATE.format(model_display=display, model_id=model_id)
+    return (
+        SYSTEM_PROMPT_TEMPLATE
+        .replace("{model_display}", display)
+        .replace("{model_id}", model_id)
+    )
 
 SYSTEM_PROMPT_TEMPLATE = """You are a helpful Discord chat assistant for a community.
 
