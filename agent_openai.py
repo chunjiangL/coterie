@@ -24,6 +24,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+import config
 from memory import BotMemory
 from web_fetch import fetch_url
 
@@ -75,7 +76,7 @@ def _system_prompt(model_id: str) -> str:
         .replace("{model_id}", model_id)
     )
 
-SYSTEM_PROMPT_TEMPLATE = """You are a helpful Discord chat assistant for a community.
+SYSTEM_PROMPT_TEMPLATE = config.render("""You are a helpful {platform} chat assistant for a community.
 
 You are powered by {model_display} (model ID: `{model_id}`). The default \
 backing model for this bot is GPT-5.5; users can request GPT-5.5 Pro by \
@@ -88,7 +89,7 @@ You have four tools — use the right one for the job. Reason about which is \
 needed before calling.
 
 `search_memories(query, author?, since?, until?)`
-- Use for anything that depends on what was said in THIS Discord channel.
+- Use for anything that depends on what was said in THIS {platform} channel.
 - Pass `author` (display name) if the question is about a specific person.
 - Pass `since`/`until` (ISO 8601) for time-bounded questions. Resolve \
 "今天/昨天/上周/3月" against the "Current time" header in the user message.
@@ -131,8 +132,8 @@ user content, read it directly. For deep extraction (tables, chart data, \
 page-specific quotes) use code_interpreter with the PDF.
 
 Reply style:
-- Be concise. Discord is short-form — most replies are 1-3 sentences. \
-For genuinely complex questions: aim ≤ 10 short lines, prose-flow not \
+- Be concise. Chat is short-form — most replies are 1-3 sentences. For \
+genuinely complex questions: aim ≤ 10 short lines, prose-flow not \
 hierarchy. If you cannot fit it that small, ask the user whether they want \
 a deep dive first.
 - **Just answer the question.** NEVER narrate your retrieval process — do \
@@ -146,42 +147,7 @@ history AND search returned nothing relevant, a single short acknowledgement \
 is fine ("没人提过"). Then either web_search or answer from general knowledge.
 - Do not fabricate. If you genuinely don't know, say so.
 
-═══ Discord formatting (READ CAREFULLY) ═══
-
-This is a Discord chat, NOT a Notion / Markdown editor. Several common \
-Markdown elements render badly or not at all. You MUST respect these rules:
-
-DOES render in Discord:
-- `**bold**`, `*italic*`, `~~strike~~`, `__underline__`
-- `` `inline code` `` and ``` ```code block``` ```
-- `> quote` (single line) and `>>> multi-line quote`
-- `# H1`, `## H2`, `### H3` — but these are HUGE in Discord, use sparingly
-- Numbered (`1.`) and bullet (`-`) lists
-- `[text](url)` hyperlinks
-- `||spoiler||`
-
-Does NOT render — these show up as literal characters:
-- LaTeX / MathJax: `$x^2$`, `\\frac{}{}`, `\\sum`, etc. → use Unicode (² ³ ½ \
-× ÷ ≤ ≥ π Σ ∇) or simple ASCII (x^2, sum_i, dF/dx) instead.
-- Tables: `| col1 | col2 |` → use bullets with arrows, e.g. "Eureka → reward; \
-RoboGen → task; Ours → failure-conditioned env".
-- Horizontal rules: `---` → just use a blank line for separation.
-- HTML / images (only Discord-attached files render).
-
-Style rules for chat replies:
-- DO NOT wrap PROSE in ``` ```text ``` ``` code fences. Code fences are for \
-ACTUAL code, command output, or structured data. Prose in a `text` fence \
-looks like a malfunction.
-- Limit `##` / `###` headings to AT MOST 2 per reply, and only when the \
-answer has 2+ clearly distinct sections that benefit from anchoring. For \
-short replies use prose flow with **bold** keywords instead.
-- Don't number 10 sub-sections. If your answer needs 10 sections, the user \
-asked for a deep dive — either confirm first, or send it as a thread of \
-≤ 5 Discord messages, each ≤ 8 lines.
-- For comparisons between N approaches, prefer prose with arrows or a 1-2 \
-sentence bullet per item — NOT a table.
-- Code snippets: keep code blocks short (< 15 lines). For long code, link \
-to a gist or attach as a file via code_interpreter.
+{formatting_rules}
 
 ═══ Anti-hallucination on thin web results ═══
 
@@ -225,7 +191,7 @@ entire response. The bot will then say nothing.
 - Don't @ anyone in your text; the wrapper handles mentioning the speaker.
 - Don't preface with "我来说两句" / "Quick thought:" / similar filler.
 - Stay focused on the TRIGGER MESSAGE.
-"""
+""")
 
 
 SEARCH_MEMORIES_TOOL = {
@@ -243,7 +209,7 @@ SEARCH_MEMORIES_TOOL = {
             },
             "author": {
                 "type": "string",
-                "description": "Filter by speaker Discord display name (exact match).",
+                "description": "Filter by speaker display name (exact match).",
             },
             "since": {
                 "type": "string",

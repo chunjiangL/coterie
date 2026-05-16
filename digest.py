@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic
 
+import config
 from agent import _strip_legacy_author_prefix, log_message_blocks
 from memory import BotMemory
 
@@ -30,7 +31,7 @@ log = logging.getLogger("dc-agent.digest")
 MODEL = "claude-opus-4-7"
 LA = ZoneInfo("America/Los_Angeles")
 
-DAILY_SYSTEM = """You write a daily digest for a Discord research channel.
+DAILY_SYSTEM = config.render("""You write a daily digest for a {platform} {community_domain} channel.
 
 You'll receive a chronological list of memory records from a 24-hour window. \
 Each line is tagged:
@@ -43,7 +44,7 @@ understand follow-up messages from humans, but do not summarize them.)
 
 Your job:
 1. Identify 2-5 main topics or threads from the [message] records. A \
-direct research question someone @-ed the bot (e.g. "reward 怎么设计", \
+direct {community_domain} question someone @-ed the bot (e.g. "reward 怎么设计", \
 "<url> 这个的技术路线是什么") counts as its own topic — surface it by name \
 with who asked, even if it was a one-off question with no further \
 discussion. Don't roll those into a general theme.
@@ -57,7 +58,7 @@ EXTEND the discussion — material the group has NOT already cited.
 techniques the group has already cited. These are OFF-LIMITS for \
 recommendation — they already know about them.
    - Then search for: (a) papers building on or following up the cited \
-work, (b) alternative approaches in the same research direction, (c) \
+work, (b) alternative approaches in the same {community_domain} direction, (c) \
 explainer / tutorial material for concepts mentioned by name without \
 context, (d) recent SOTA (past 1-2 weeks where possible) in the topic area.
 
@@ -103,20 +104,20 @@ adjacent material — DO NOT pad with already-cited papers.
 returned.
 
 Substantive content is about CONTENT, not count. A 4-character question like \
-`reward 怎么设计` IS substantive — it's a real research question. Don't \
+`reward 怎么设计` IS substantive — it's a real {community_domain} question. Don't \
 dismiss messages as trivial just because they're short. The only things \
 genuinely skippable: greetings ("hi"), reactions ("+1", "lol"), and pure \
 logistics ("ok", "done", "拉进来了").
 
-Always produce topic bullets if there's any research content at all. Only \
-say "no research discussion this window" if literally every message was a \
+Always produce topic bullets if there's any {community_domain} content at all. Only \
+say "no {community_domain} discussion this window" if literally every message was a \
 greeting / reaction / logistics. 📚 is optional (omit if no adjacent material \
 found), but topic bullets are not.
 
 Be concise. No preamble, no meta-narration about your retrieval process.
-"""
+""")
 
-WEEKLY_SYSTEM = """You write a weekly digest for a Discord research channel.
+WEEKLY_SYSTEM = config.render("""You write a weekly digest for a {platform} {community_domain} channel.
 
 You'll receive a chronological list of memory records from a 7-day window. \
 Each line is tagged:
@@ -127,7 +128,7 @@ summarization (they are not source material).
 
 Your job:
 1. Identify 3-7 themes across the week — group related threads even if they \
-spanned multiple days. A direct research question someone @-ed the bot \
+spanned multiple days. A direct {community_domain} question someone @-ed the bot \
 (e.g. "reward 怎么设计", "<url> 这个的技术路线是什么") gets its own theme \
 named by the question — don't fold a specific question into a broader \
 theme. Surface it by name with who asked.
@@ -183,11 +184,11 @@ Substantive content is about CONTENT, not count. A short question like \
 because they're short. Only genuinely skippable: greetings, reactions, \
 logistics ("ok", "done", "拉进来了").
 
-Always produce theme bullets if there's any research content at all. Only \
-say "no research discussion this week" if literally everything was \
+Always produce theme bullets if there's any {community_domain} content at all. Only \
+say "no {community_domain} discussion this week" if literally everything was \
 greetings/reactions/logistics. 📚 is optional (omit if no adjacent material). \
 Be concise.
-"""
+""")
 
 
 class Digest:

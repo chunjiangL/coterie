@@ -13,6 +13,8 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+import config
+
 log = logging.getLogger("dc-agent.proactive")
 
 MODEL = "gpt-5.5-pro"
@@ -22,24 +24,21 @@ DEBOUNCE_SEC = 8.0
 COOLDOWN_SEC = 60
 MAX_RECENT_CTX = 10
 
-CLASSIFIER_SYSTEM = """You decide whether a bot should proactively join a \
-Discord research-channel conversation. The bot is NOT @-ed; it's listening, \
-and you control whether it speaks.
+CLASSIFIER_SYSTEM = config.render("""You decide whether a bot should proactively \
+join a {platform} {community_domain}-channel conversation. The bot is NOT @-ed; \
+it's listening, and you control whether it speaks.
 
 You see: a TRIGGER MESSAGE (the new message that just arrived), the \
 speaker's profile, and recent channel context.
 
 Decide fire=true ONLY when ALL hold:
-1. The trigger contains substantive research signal. This includes:
-   (a) a real research question or non-trivial technical claim about \
-model architecture, training, papers, datasets, infra, RL/RLHF, agent \
-design, code, hardware, etc.;
-   (b) a BARE link to research-relevant content — arxiv abstract/pdf, \
-GitHub repo about ML / agents / research code, X.com (Twitter) post about \
-a paper or project, huggingface model card, anthropic / openai / deepmind \
-/ thinkingmachines blog post, etc. A naked URL with no accompanying text \
-counts as fire-worthy if the URL itself signals "this is relevant".
-   (c) a screenshot or image clearly showing research content (paper \
+1. The trigger contains substantive {community_domain} signal. This includes:
+   (a) a real {community_domain} question or non-trivial technical claim about \
+{substantive_topics};
+   (b) a BARE link to {community_domain}-relevant content — {relevant_link_domains}. \
+A naked URL with no accompanying text counts as fire-worthy if the URL \
+itself signals "this is relevant".
+   (c) a screenshot or image clearly showing {community_domain} content (paper \
 title, code, training curve, etc.) — same logic as (b).
 2. The bot can plausibly add value: concrete data, references, a \
 contrarian point, prior context from this channel that's relevant. NOT \
@@ -47,7 +46,7 @@ echo / summary / general encouragement.
 3. The trigger was NOT already answered in the recent context.
 4. The trigger is NOT about the bot itself.
 5. The trigger is NOT pure chitchat / logistics / reactions / emoji-only.
-6. The trigger is NOT a non-research link.
+6. The trigger is NOT a non-{community_domain} link.
 
 ═══ Speaker preference override (strong signal) ═══
 
@@ -70,7 +69,7 @@ If fire=false, search_query = "".
 
 Always include `reason`: one short sentence on why you decided. Be factual.
 
-Output ONLY the JSON object — no preamble, no markdown fence."""
+Output ONLY the JSON object — no preamble, no markdown fence.""")
 
 CLASSIFIER_SCHEMA: dict[str, Any] = {
     "type": "object",

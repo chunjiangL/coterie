@@ -35,6 +35,7 @@ from typing import Any
 
 from anthropic import AsyncAnthropic
 
+import config
 from agent import _strip_legacy_author_prefix
 from memory import BotMemory
 
@@ -46,26 +47,22 @@ DEBOUNCE_SEC = 8.0           # wait this long after last msg before classifying
 COOLDOWN_SEC = 60            # min interval between fires per channel for DIFFERENT askers
 MAX_RECENT_CTX = 10
 
-CLASSIFIER_SYSTEM = """You decide whether a bot should proactively join a \
-Discord research-channel conversation. The bot is NOT @-ed; it's listening, \
-and you control whether it speaks.
+CLASSIFIER_SYSTEM = config.render("""You decide whether a bot should proactively \
+join a {platform} {community_domain}-channel conversation. The bot is NOT @-ed; \
+it's listening, and you control whether it speaks.
 
 You see: a TRIGGER MESSAGE (the new message that just arrived), the \
 speaker's profile, and recent channel context.
 
 Decide fire=true ONLY when ALL hold:
-1. The trigger contains substantive research signal. This includes:
-   (a) a real research question or non-trivial technical claim about \
-model architecture, training, papers, datasets, infra, RL/RLHF, agent \
-design, code, hardware, etc.;
-   (b) a BARE link to research-relevant content — arxiv abstract/pdf, \
-GitHub repo about ML / agents / research code, X.com (Twitter) post about \
-a paper or project, huggingface model card, anthropic / openai / deepmind \
-/ thinkingmachines blog post, etc. A naked URL with no accompanying text \
-counts as fire-worthy if the URL itself signals "this is relevant" — the \
-agent can fetch it and add value. Don't reject just because the human \
-didn't write a sentence around the link.
-   (c) a screenshot or image clearly showing research content (paper \
+1. The trigger contains substantive {community_domain} signal. This includes:
+   (a) a real {community_domain} question or non-trivial technical claim about \
+{substantive_topics};
+   (b) a BARE link to {community_domain}-relevant content — {relevant_link_domains}. \
+A naked URL with no accompanying text counts as fire-worthy if the URL itself \
+signals "this is relevant" — the agent can fetch it and add value. Don't \
+reject just because the human didn't write a sentence around the link.
+   (c) a screenshot or image clearly showing {community_domain} content (paper \
 title, code, training curve, etc.) — same logic as (b).
 2. The bot can plausibly add value: concrete data, references, a \
 contrarian point, prior context from this channel that's relevant. NOT \
@@ -77,9 +74,9 @@ just gave the answer 1-2 msgs ago → skip).
 to discuss, not for the bot to defend itself.
 5. The trigger is NOT pure chitchat / logistics / reactions ("吃了吗", \
 "+1", "好的", "拉进来了", emoji-only).
-6. The trigger is NOT a non-research link (random news article, meme, \
-unrelated tweet about food/politics/etc.). Use judgement on the URL \
-domain + the channel's research focus.
+6. The trigger is NOT a non-{community_domain} link (random news article, meme, \
+unrelated tweet about food/politics/etc.). Use judgement on the URL domain \
++ the channel's {community_domain} focus.
 
 ═══ Speaker preference override (strong signal) ═══
 
@@ -111,7 +108,7 @@ Always include `reason`: one short sentence on why you decided yes/no. \
 Keep it factual.
 
 Output the JSON exactly matching the schema. No preamble, no other text.
-"""
+""")
 
 CLASSIFIER_SCHEMA: dict[str, Any] = {
     "type": "object",

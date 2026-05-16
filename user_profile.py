@@ -21,6 +21,7 @@ from typing import Any
 
 from anthropic import AsyncAnthropic
 
+import config
 from agent import _strip_legacy_author_prefix, log_message_blocks
 from memory import BotMemory
 
@@ -36,8 +37,8 @@ REFRESH_MSG_THRESHOLD = 10        # ≥N new msgs since last build → rebuild
 REFRESH_AGE_SEC = 24 * 3600       # OR ≥24h old (catches slow stylistic drift)
 MIN_REBUILD_INTERVAL_SEC = 3600   # never rebuild same profile twice within 1h
 
-SYSTEM_PROMPT = """You write a short identity profile for a Discord \
-research-channel member.
+SYSTEM_PROMPT = config.render("""You write a short identity profile for a {platform} \
+{community_domain}-channel member.
 
 You may receive a CURRENT PROFILE (the previous version of this user's \
 summary). If present, treat it as a prior best guess: keep identity facts \
@@ -90,7 +91,7 @@ output ONLY:
   ### Identity
   <display name> (insufficient signal for personality/style yet)
   ```
-"""
+""")
 
 
 class ProfileBuilder:

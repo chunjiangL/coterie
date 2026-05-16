@@ -15,6 +15,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+import config
 from memory import BotMemory
 
 log = logging.getLogger("dc-agent.annotator")
@@ -25,7 +26,7 @@ BATCH_THRESHOLD = 10
 TIME_THRESHOLD_SEC = 300
 MAX_TURNS = 6   # annotator should never need many tool hops
 
-SYSTEM_PROMPT = """You annotate Discord chat messages to improve later \
+SYSTEM_PROMPT = config.render("""You annotate {platform} chat messages to improve later \
 semantic retrieval. You'll see a window of recent channel messages. Some are \
 marked [NEW] — your job is to produce one short English annotation for each \
 non-trivial [NEW] message. Messages marked [BOT] are the bot's own prior \
@@ -47,7 +48,7 @@ messages if they form one coherent thought — set message_ids to all involved.
 
 Each annotation should be one English sentence, under 30 words.
 
-Output JSON matching the schema. Annotations only — no preamble, no explanation."""
+Output JSON matching the schema. Annotations only — no preamble, no explanation.""")
 
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",

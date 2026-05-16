@@ -6,6 +6,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+import config
 from memory import BotMemory
 
 log = logging.getLogger("dc-agent.profile")
@@ -19,8 +20,8 @@ REFRESH_MSG_THRESHOLD = 10
 REFRESH_AGE_SEC = 24 * 3600
 MIN_REBUILD_INTERVAL_SEC = 3600
 
-SYSTEM_PROMPT = """You write a short identity profile for a Discord \
-research-channel member.
+SYSTEM_PROMPT = config.render("""You write a short identity profile for a {platform} \
+{community_domain}-channel member.
 
 You may receive a CURRENT PROFILE (the previous version of this user's \
 summary). If present, treat it as a prior best guess: keep identity facts \
@@ -66,7 +67,7 @@ Rules:
   ### Identity
   <display name> (insufficient signal for personality/style yet)
   ```
-"""
+""")
 
 
 class ProfileBuilder:

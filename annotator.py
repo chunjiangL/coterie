@@ -26,6 +26,7 @@ from typing import Any
 
 from anthropic import AsyncAnthropic, beta_async_tool
 
+import config
 from agent import _strip_legacy_author_prefix, log_message_blocks
 from memory import BotMemory
 
@@ -36,7 +37,7 @@ WINDOW_SIZE = 100
 BATCH_THRESHOLD = 10
 TIME_THRESHOLD_SEC = 300
 
-SYSTEM_PROMPT = """You annotate Discord chat messages to improve later \
+SYSTEM_PROMPT = config.render("""You annotate {platform} chat messages to improve later \
 semantic retrieval. You'll see a window of recent channel messages. Some are \
 marked [NEW] — your job is to produce one short English annotation for each \
 non-trivial [NEW] message. Messages marked [BOT] are the bot's own prior \
@@ -63,7 +64,7 @@ messages if they form one coherent thought — set message_ids to all involved.
 Each annotation should be one English sentence, under 30 words.
 
 Output JSON matching the schema. Annotations only — no preamble, no \
-explanation."""
+explanation.""")
 
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",

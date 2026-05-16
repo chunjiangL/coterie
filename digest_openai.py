@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from openai import AsyncOpenAI
 
+import config
 from memory import BotMemory
 
 log = logging.getLogger("dc-agent.digest")
@@ -19,7 +20,7 @@ MODEL = "gpt-5.5-pro"
 REASONING_EFFORT = "xhigh"
 LA = ZoneInfo("America/Los_Angeles")
 
-DAILY_SYSTEM = """You write a daily digest for a Discord research channel.
+DAILY_SYSTEM = config.render("""You write a daily digest for a {platform} {community_domain} channel.
 
 You'll receive a chronological list of memory records from a 24-hour window. \
 Each line is tagged:
@@ -30,7 +31,7 @@ to disambiguate references.
 purpose of summarization.
 
 Your job:
-1. Identify 2-5 main topics from the [message] records. A direct research \
+1. Identify 2-5 main topics from the [message] records. A direct {community_domain} \
 question someone @-ed the bot counts as its own topic — surface it by name \
 with who asked, even if it was a one-off question.
 2. For each topic, write 1-2 sentences citing who said what and the takeaway.
@@ -82,10 +83,10 @@ Substantive content is about CONTENT, not count. A short question like \
 `reward 怎么设计` IS substantive. Only genuinely skippable: greetings, \
 reactions ("+1", "lol"), logistics ("ok", "done").
 
-Always produce topic bullets if there's any research content at all. Be \
-concise. No preamble, no meta-narration about retrieval."""
+Always produce topic bullets if there's any {community_domain} content at all. Be \
+concise. No preamble, no meta-narration about retrieval.""")
 
-WEEKLY_SYSTEM = """You write a weekly digest for a Discord research channel.
+WEEKLY_SYSTEM = config.render("""You write a weekly digest for a {platform} {community_domain} channel.
 
 You'll receive a chronological list of memory records from a 7-day window. \
 Each line is tagged:
@@ -94,7 +95,7 @@ Each line is tagged:
 - `[agent_reply]` — YOUR OWN past replies / past digests. IGNORE.
 
 Your job:
-1. Identify 3-7 themes across the week. A direct research question someone \
+1. Identify 3-7 themes across the week. A direct {community_domain} question someone \
 @-ed the bot gets its own theme named by the question.
 2. For each theme, write 2-3 sentences: what was discussed, who drove it, \
 key conclusions or open questions.
@@ -129,7 +130,7 @@ Format rules:
 - One `why:` per item.
 - 📚 optional. Don't fabricate URLs.
 
-Be concise."""
+Be concise.""")
 
 
 class Digest:
