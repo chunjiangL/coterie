@@ -1,0 +1,26 @@
+# Secrets — Discord/Anthropic/OpenAI API keys live here.
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.python-version
+
+# Local runtime state — not source. Bot rebuilds these on its own.
+bot.log
+*.log
+digest_state.json
+
+# User data — Mem0 vector store + sqlite. NEVER commit; contains real
+# Discord conversations, per-user profiles, and annotations from the
+# research group.
+mem0_data/
+
+# Assistant / editor metadata
+.claude/
+.idea/
+.vscode/
+.DS_Store

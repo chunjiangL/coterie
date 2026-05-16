@@ -1,0 +1,489 @@
+"""Discord bot entrypoint."""
+
+import base64
+import datetime as _dt
+import io
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import discord
+from discord.ext import tasks
+from dotenv import load_dotenv
+
+# Load .env BEFORE importing backends — backends.py reads BACKEND at import
+# time, so the env var must be present before that line. Same logic for
+# memory.py (Mem0's internal LLM picks anthropic vs openai by env).
+load_dotenv()
+
+from backends import BACKEND, Agent, Annotator, Digest, ProactiveClassifier, ProfileBuilder
+from memory import BotMemory
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("dc-agent")
+
+# Inline-base64 PDFs above this size get skipped — they'd bloat the request
+# body. (Future: upload to Files API and pass file_id instead.)
+MAX_PDF_BYTES = 20 * 1024 * 1024  # 20 MB
+DISCORD_REPLY_CHARS = 1900
+
+def _csv_set(env_var: str) -> set[str]:
+    return {x.strip() for x in os.environ.get(env_var, "").split(",") if x.strip()}
+
+
+# Channels that opt into the daily/weekly digest push. Comma-separated
+# channel IDs in env; unset = no digest channels.
+DIGEST_CHANNELS: set[str] = _csv_set("DIGEST_CHANNELS")
+# Channels where the bot proactively jumps into research discussions.
+# Independent from DIGEST_CHANNELS — a channel can opt into one, both, or neither.
+PROACTIVE_CHANNELS: set[str] = _csv_set("PROACTIVE_CHANNELS")
+# Servers (Discord guilds) where the bot proactively participates in EVERY
+# text channel. Use this when you want "blanket on for the whole server"
+# without enumerating channel IDs as people add new ones. PROACTIVE_CHANNELS
+# still works as an explicit override for cross-server / extra channels.
+PROACTIVE_SERVERS: set[str] = _csv_set("PROACTIVE_SERVERS")
+
+LA = ZoneInfo("America/Los_Angeles")
+DIGEST_TIME = _dt.time(hour=9, minute=0, tzinfo=LA)
+
+
+def _proactive_channel_enabled(message: discord.Message) -> bool:
+    if str(message.channel.id) in PROACTIVE_CHANNELS:
+        return True
+    if message.guild and str(message.guild.id) in PROACTIVE_SERVERS:
+        return True
+    return False
+
+intents = discord.Intents.default()
+intents.message_content = True
+
+client = discord.Client(intents=intents)
+memory = BotMemory()
+agent = Agent(memory=memory)
+annotator = Annotator(memory=memory)
+digest = Digest(memory=memory)
+profile_builder = ProfileBuilder(memory=memory)
+proactive = ProactiveClassifier()
+
+
+@tasks.loop(seconds=30)
+async def annotator_tick() -> None:
+    await annotator.maybe_flush_all()
+
+
+@tasks.loop(seconds=600)
+async def profile_refresh_tick() -> None:
+    """Every 10 min, walk every text channel the bot is in and rebuild any
+    profile whose author crossed the refresh threshold. The per-profile
+    cooldown (1h) keeps cost bounded even with many channels."""
+    for guild in client.guilds:
+        for channel in guild.text_channels:
+            await profile_builder.maybe_refresh_channel(str(channel.id))
+
+
+# Per-channel record of when daily/weekly digest last ran successfully.
+# Persisted across bot restarts so wake-from-sleep doesn't double-post,
+# and so a bot that was asleep at 9am LA still fires the digest when
+# the catch-up tick runs after wake.
+DIGEST_STATE_FILE = Path(__file__).parent / "digest_state.json"
+
+
+def _load_digest_state() -> dict[str, dict[str, str]]:
+    if not DIGEST_STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(DIGEST_STATE_FILE.read_text())
+    except Exception:
+        log.exception("failed to load digest state; starting fresh")
+        return {}
+
+
+def _save_digest_state(state: dict[str, dict[str, str]]) -> None:
+    try:
+        DIGEST_STATE_FILE.write_text(json.dumps(state, indent=2))
+    except Exception:
+        log.exception("failed to persist digest state")
+
+
+def _today_9am(now_la: _dt.datetime) -> _dt.datetime:
+    return now_la.replace(hour=9, minute=0, second=0, microsecond=0)
+
+
+def _this_monday_9am(now_la: _dt.datetime) -> _dt.datetime:
+    monday = now_la - _dt.timedelta(days=now_la.weekday())
+    return monday.replace(hour=9, minute=0, second=0, microsecond=0)
+
+
+async def _run_daily_if_pending(now_la: _dt.datetime) -> None:
+    """Idempotent: only fires if 9am LA has passed today AND we haven't
+    yet posted today's daily digest. Called by both the 09:00-LA tick
+    and the catch-up tick."""
+    target = _today_9am(now_la)
+    if now_la < target:
+        return
+    state = _load_digest_state()
+    changed = False
+    for cid in DIGEST_CHANNELS:
+        ch = state.setdefault(cid, {})
+        last_iso = ch.get("daily_last_run")
+        if last_iso:
+            try:
+                last = _dt.datetime.fromisoformat(last_iso)
+                if last >= target:
+                    continue
+            except ValueError:
+                pass
+        log.info("daily digest: running for channel=%s (last_run=%s)", cid, last_iso)
+        try:
+            text = await digest.daily(cid)
+        except Exception:
+            log.exception("daily digest failed for channel %s", cid)
+            continue
+        if text:
+            await _push_to_channel(cid, text)
+        ch["daily_last_run"] = now_la.isoformat()
+        changed = True
+    if changed:
+        _save_digest_state(state)
+
+
+async def _run_weekly_if_pending(now_la: _dt.datetime) -> None:
+    """Idempotent weekly fire: only on Monday at/after 9am LA, and only
+    once per week. State key = this week's Monday-9am ISO."""
+    monday = _this_monday_9am(now_la)
+    if now_la < monday:
+        return  # Mon 0-9am, or not Monday at all
+    state = _load_digest_state()
+    changed = False
+    for cid in DIGEST_CHANNELS:
+        ch = state.setdefault(cid, {})
+        last_iso = ch.get("weekly_last_run")
+        if last_iso:
+            try:
+                last = _dt.datetime.fromisoformat(last_iso)
+                if last >= monday:
+                    continue
+            except ValueError:
+                pass
+        log.info("weekly digest: running for channel=%s (last_run=%s)", cid, last_iso)
+        try:
+            text = await digest.weekly(cid)
+        except Exception:
+            log.exception("weekly digest failed for channel %s", cid)
+            continue
+        if text:
+            await _push_to_channel(cid, text)
+        ch["weekly_last_run"] = now_la.isoformat()
+        changed = True
+    if changed:
+        _save_digest_state(state)
+
+
+@tasks.loop(time=DIGEST_TIME)
+async def daily_digest_tick() -> None:
+    await _run_daily_if_pending(_dt.datetime.now(LA))
+
+
+@tasks.loop(time=DIGEST_TIME)
+async def weekly_digest_tick() -> None:
+    if _dt.datetime.now(LA).weekday() != 0:
+        return
+    await _run_weekly_if_pending(_dt.datetime.now(LA))
+
+
+@tasks.loop(minutes=10)
+async def digest_catchup_tick() -> None:
+    """Backup for tasks.loop(time=...), which silently misses firings
+    when macOS suspends the asyncio loop overnight. Runs every 10 min;
+    state file dedupes so this never double-posts."""
+    now = _dt.datetime.now(LA)
+    await _run_daily_if_pending(now)
+    await _run_weekly_if_pending(now)
+
+
+async def _push_to_channel(channel_id: str, text: str) -> None:
+    try:
+        channel = client.get_channel(int(channel_id))
+    except ValueError:
+        log.warning("digest: bad channel id %s", channel_id)
+        return
+    if channel is None:
+        log.warning("digest: channel %s not found in cache", channel_id)
+        return
+    for i in range(0, len(text), DISCORD_REPLY_CHARS):
+        await channel.send(text[i : i + DISCORD_REPLY_CHARS])
+
+
+async def _proactive_dispatch(message: discord.Message) -> None:
+    """Run after the debounce wait inside ProactiveClassifier.schedule.
+
+    Pulls recent ctx, classifies, fires Mem0 search + agent.reply on hit,
+    then sends with @-mention. Cooldown is set only AFTER a successful
+    send so we don't burn the channel's quiet window on no-ops.
+    """
+    channel_id = str(message.channel.id)
+    asker = message.author.display_name
+    if proactive.cooldown_active(channel_id, asker=asker):
+        return
+
+    recent_msgs = annotator.recent_n(channel_id, n=10)
+
+    try:
+        asker_profile = await profile_builder.ensure(
+            channel_id=channel_id,
+            author=asker,
+        )
+    except Exception:
+        log.exception("proactive: profile lookup failed")
+        asker_profile = None
+
+    decision = await proactive.evaluate(
+        trigger_msg_text=message.content,
+        asker=asker,
+        asker_profile=asker_profile,
+        recent_msgs=recent_msgs,
+    )
+    if not decision or not decision.get("fire"):
+        return
+
+    prior_relevant: list[Any] = []
+    search_query = (decision.get("search_query") or "").strip()
+    if search_query:
+        try:
+            prior_relevant = await memory.search(
+                query=search_query,
+                channel_id=channel_id,
+                record_type="message",
+                limit=5,
+            )
+        except Exception:
+            log.exception("proactive: Mem0 search failed")
+
+    try:
+        reply_text, _ = await agent.reply(
+            query=message.content,
+            channel_id=channel_id,
+            asker=asker,
+            asker_profile=asker_profile,
+            mode="proactive",
+            recent_context=recent_msgs,
+            prior_relevant=prior_relevant,
+            trigger_reason=decision.get("reason"),
+        )
+    except Exception:
+        log.exception("proactive: agent.reply failed")
+        return
+
+    reply_text = (reply_text or "").strip()
+    if not reply_text or reply_text == "<skip>" or reply_text.startswith("<skip>"):
+        log.info("proactive: agent emitted <skip>, suppressing post")
+        return
+
+    final = f"<@{message.author.id}> {reply_text}"
+    try:
+        for i in range(0, len(final), DISCORD_REPLY_CHARS):
+            await message.channel.send(final[i : i + DISCORD_REPLY_CHARS])
+    except Exception:
+        log.exception("proactive: send failed")
+        return
+    proactive.mark_fired(channel_id, asker=asker)
+    log.info("proactive: fired in channel=%s asker=%s", channel_id, asker)
+
+
+@client.event
+async def on_ready() -> None:
+    log.info("logged in as %s (backend=%s)", client.user, BACKEND)
+    for guild in client.guilds:
+        log.info("guild: id=%s name=%r channels=%d", guild.id, guild.name, len(guild.text_channels))
+    for guild in client.guilds:
+        for channel in guild.text_channels:
+            try:
+                pins = await channel.pins()
+            except (discord.Forbidden, discord.HTTPException):
+                continue
+            for msg in pins:
+                await memory.mark_pinned(
+                    channel_id=str(channel.id),
+                    message_id=str(msg.id),
+                )
+    if not annotator_tick.is_running():
+        annotator_tick.start()
+    if not profile_refresh_tick.is_running():
+        profile_refresh_tick.start()
+    if PROACTIVE_CHANNELS or PROACTIVE_SERVERS:
+        # Pull constants from the backend's proactive module without
+        # hardcoding either implementation here.
+        if BACKEND == "openai":
+            from proactive_openai import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
+        else:
+            from proactive import COOLDOWN_SEC as _PCD, DEBOUNCE_SEC as _PDB
+        log.info(
+            "proactive: enabled channels=%s servers=%s (debounce=%ss cooldown=%ss, same-asker bypass)",
+            sorted(PROACTIVE_CHANNELS), sorted(PROACTIVE_SERVERS),
+            int(_PDB), int(_PCD),
+        )
+    else:
+        log.info("proactive: no PROACTIVE_CHANNELS/SERVERS env, disabled")
+    if DIGEST_CHANNELS:
+        log.info("digest: scheduled for channels %s at 9am LA", sorted(DIGEST_CHANNELS))
+        if not daily_digest_tick.is_running():
+            daily_digest_tick.start()
+        if not weekly_digest_tick.is_running():
+            weekly_digest_tick.start()
+        if not digest_catchup_tick.is_running():
+            digest_catchup_tick.start()
+    else:
+        log.info("digest: no DIGEST_CHANNELS env, skipping schedule")
+
+
+@client.event
+async def on_message(message: discord.Message) -> None:
+    # Filter OTHER bots only; keep our own replies so the channel record is
+    # complete and the annotator window has context for user follow-ups
+    # ("好的" / "对" against what the bot just said).
+    is_self = client.user is not None and message.author.id == client.user.id
+    if message.author.bot and not is_self:
+        return
+
+    if message.type is discord.MessageType.pins_add and message.reference and not is_self:
+        await memory.mark_pinned(
+            channel_id=str(message.channel.id),
+            message_id=str(message.reference.message_id),
+        )
+        return
+
+    pdf_attachments = [
+        a for a in message.attachments
+        if (a.content_type or "").lower().startswith("application/pdf")
+        or a.filename.lower().endswith(".pdf")
+    ]
+
+    if not message.content and not pdf_attachments:
+        return
+
+    attachment_summary = (
+        " [attachments: " + ", ".join(a.filename for a in pdf_attachments) + "]"
+        if pdf_attachments else ""
+    )
+    full_content = (message.content or "") + attachment_summary
+    timestamp_iso = message.created_at.isoformat()
+    await memory.add(
+        content=full_content,
+        channel_id=str(message.channel.id),
+        author_name=message.author.display_name,
+        author_id=str(message.author.id),
+        message_id=str(message.id),
+        timestamp=timestamp_iso,
+        record_type="agent_reply" if is_self else "message",
+    )
+    annotator.buffer_push(
+        channel_id=str(message.channel.id),
+        message_id=str(message.id),
+        author=message.author.display_name,
+        content=full_content,
+        timestamp_iso=timestamp_iso,
+        is_bot_reply=is_self,
+    )
+
+    # Bot never @s itself or DMs itself — return early to avoid recursion
+    if is_self:
+        return
+
+    if not (client.user in message.mentions or isinstance(message.channel, discord.DMChannel)):
+        # Not @-ed. Maybe still worth jumping in proactively?
+        if message.content and _proactive_channel_enabled(message):
+            proactive.schedule(
+                str(message.channel.id),
+                _proactive_dispatch(message),
+            )
+        return
+
+    query = message.content
+    if client.user is not None:
+        query = query.replace(f"<@{client.user.id}>", "").replace(f"<@!{client.user.id}>", "")
+    query = query.strip()
+    if not query and not pdf_attachments:
+        return
+    if not query and pdf_attachments:
+        query = "请看一下这个附件。"
+
+    attachments_payload = await _build_attachment_blocks(pdf_attachments)
+
+    async with message.channel.typing():
+        try:
+            asker_profile = await profile_builder.ensure(
+                channel_id=str(message.channel.id),
+                author=message.author.display_name,
+            )
+        except Exception:
+            log.exception("profile lookup failed")
+            asker_profile = None
+        try:
+            reply_text, files = await agent.reply(
+                query=query,
+                channel_id=str(message.channel.id),
+                asker=message.author.display_name,
+                asker_profile=asker_profile,
+                attachments=attachments_payload,
+            )
+        except Exception:
+            log.exception("agent failed")
+            await message.reply("出错了，看看 bot log 吧。")
+            return
+
+    await _send_reply(message, reply_text, files)
+
+
+async def _build_attachment_blocks(
+    pdfs: list[discord.Attachment],
+) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    for att in pdfs:
+        if att.size > MAX_PDF_BYTES:
+            log.warning("skipping %s (%d bytes, too large)", att.filename, att.size)
+            continue
+        try:
+            data = await att.read()
+        except Exception:
+            log.exception("failed to download attachment %s", att.filename)
+            continue
+        blocks.append({
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": base64.standard_b64encode(data).decode("ascii"),
+            },
+            "title": att.filename,
+        })
+    return blocks
+
+
+async def _send_reply(
+    message: discord.Message,
+    text: str,
+    files: list[tuple[str, bytes]],
+) -> None:
+    discord_files = [
+        discord.File(io.BytesIO(data), filename=name) for name, data in files
+    ]
+    if not text and not discord_files:
+        await message.reply("(空回复)")
+        return
+
+    # Discord caps replies at 2000 chars; chunk the text. Files attach to the
+    # first chunk only.
+    chunks = [text[i : i + DISCORD_REPLY_CHARS] for i in range(0, len(text), DISCORD_REPLY_CHARS)] or [""]
+    first, rest = chunks[0], chunks[1:]
+    await message.reply(first or "(see attached)", files=discord_files or None)
+    for chunk in rest:
+        await message.reply(chunk)
+
+
+if __name__ == "__main__":
+    token = os.environ.get("DISCORD_TOKEN")
+    if not token:
+        raise SystemExit("DISCORD_TOKEN not set (copy .env.example to .env)")
+    client.run(token)
