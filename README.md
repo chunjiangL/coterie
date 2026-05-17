@@ -1,362 +1,155 @@
 # Coterie
 
-A lightweight chat-management bot for small communities. Runs on **Discord
-or Slack**, with the same semantic-memory + digest + proactive-participation
-stack under both.
-
-- **@-mention replies** with channel-scoped semantic memory (Mem0 + Chroma)
-- **Per-user profiles** auto-built from message history (identity, style, taste,
-  bot-interaction preference)
-- **Daily / weekly digests** with adjacent reading recommendations via
-  web_search — posted to selected channels on a 9am-LA cron with macOS-sleep
-  catch-up
-- **Proactive participation**: non-@ messages classified by a reasoning model;
-  the bot chimes in only when it can add concrete value (≤1-2 sentences)
-- **Pinned-message awareness** — channel admins' pins get a retrieval boost
-- **PDF attachments** read natively; `code_interpreter` for plots & file output
-- **Swappable LLM backend** via `BACKEND` env var: Anthropic Claude or OpenAI
-- **Swappable chat platform** via `PLATFORM` env var: Discord or Slack — the
-  prompts know each platform's markdown dialect and emit accordingly
-- **Customizable community domain** via `COMMUNITY_DOMAIN` env var — defaults
-  to "research" but works for frontend dev, DAO governance, design crits, etc.
-
-Built originally for the "ICLR DDoS" research group; small enough to fork and
-re-purpose for any 5-30 person chat that wants light AI-assisted curation.
-
----
+A bot for small chat communities. Runs on Discord or Slack. Maintains
+per-channel memory, fires daily and weekly digests, optionally chimes in
+on its own. One process. Behavior toggles through env vars.
 
 ## Quick start
 
-```bash
+```
 git clone https://github.com/chunjiangL/coterie
 cd coterie
 uv venv && source .venv/bin/activate
-uv pip install -e .            # reads dependencies from pyproject.toml
-
+uv pip install -e .
 cp .env.example .env
-# Edit .env — fill platform tokens + at least one LLM API key (see below)
-
-# Discord:
-coterie-discord
-# Slack:
-coterie-slack
-
-# Or via module path:
-python -m coterie.adapters.discord_adapter
-python -m coterie.adapters.slack_adapter
-
-# Or in the background:
-# nohup coterie-discord > bot.log 2>&1 &
+# fill in tokens
+coterie-discord    # or: coterie-slack
 ```
 
-Two independent entry points; both share the same `mem0_data/` vector store
-and config files. You can run them simultaneously if you want one bot
-serving both a Slack workspace and a Discord server.
+## Discord setup
 
----
+At https://discord.com/developers/applications, create an app. Bot tab,
+reset and copy the token. This is `DISCORD_TOKEN`.
 
-## Discord bot setup
+On the same page, enable `MESSAGE CONTENT INTENT` under Privileged
+Gateway Intents. Without it the bot cannot read message text.
 
-1. Go to **<https://discord.com/developers/applications>** → **New Application**
-   → name it.
-2. In the new app, **Bot** tab → **Reset Token** → copy. This is your
-   `DISCORD_TOKEN` (paste into `.env`).
-3. **Privileged Gateway Intents** → enable **MESSAGE CONTENT INTENT**.
-   Required so the bot can actually read message text (Discord blocks
-   reading content by default since 2022). Save.
-4. **OAuth2** → **URL Generator** → check:
-   - **Scopes**: `bot`
-   - **Bot Permissions**: `View Channels`, `Send Messages`, `Read Message
-     History`, `Embed Links`, `Attach Files`, `Add Reactions`
-5. Copy the generated invite URL → open in browser → pick the target server
-   → authorize. The bot now shows up offline in your member list; it will
-   come online when `python bot.py` is running.
+OAuth2, URL Generator: scope `bot`, permissions View Channels, Send
+Messages, Read Message History, Embed Links, Attach Files, Add Reactions.
+Open the generated URL to invite the bot to a server.
 
-To find **channel** / **server (guild)** IDs for the env config:
+For channel and server IDs, turn on Developer Mode (User Settings,
+Advanced), then right-click.
 
-- In Discord, **User Settings → Advanced → Developer Mode** (turn on)
-- Right-click a channel → **Copy Channel ID**
-- Right-click a server icon → **Copy Server ID**
+## Slack setup
 
----
+At https://api.slack.com/apps, create an app from scratch in your
+workspace.
 
-## Slack bot setup
+Socket Mode: toggle on, generate an app-level token with
+`connections:write`. This is `SLACK_APP_TOKEN` (starts with `xapp-`).
 
-Slack uses Socket Mode (an outbound WebSocket from your bot to Slack), so you
-don't need a public webhook URL — the bot just needs to be able to reach
-`slack.com`.
+OAuth & Permissions, Bot Token Scopes: `app_mentions:read`,
+`channels:history`, `channels:read`, `chat:write`, `files:read`,
+`files:write`, `groups:history`, `groups:read`, `im:history`, `im:read`,
+`im:write`, `users:read`.
 
-### 1) Create the app
+Event Subscriptions: enable, subscribe to bot events `app_mention` and
+`message.channels`. Add `message.groups` and `message.im` if you want the
+bot in private channels or DMs.
 
-1. Go to **<https://api.slack.com/apps>** → **Create New App** → **From scratch**
-2. Pick a name (e.g. "Coterie") and the target workspace.
+Install App, Install to Workspace, copy the Bot User OAuth Token (starts
+with `xoxb-`). This is `SLACK_BOT_TOKEN`.
 
-### 2) Enable Socket Mode + grab the App Token
+`/invite @yourbot` into channels. Channel IDs are at the bottom of View
+channel details.
 
-3. Left sidebar → **Socket Mode** → toggle **Enable Socket Mode** on.
-4. Slack prompts you to generate an **App-Level Token**:
-   - Name it `socket-mode`
-   - Add the `connections:write` scope
-   - Click **Generate**
-5. Copy the `xapp-...` value. This is your `SLACK_APP_TOKEN`.
+## Configuration
 
-### 3) Configure Bot Token Scopes
-
-6. Left sidebar → **OAuth & Permissions** → scroll to **Scopes → Bot Token Scopes**.
-7. Click **Add an OAuth Scope** for each of:
-
-   | Scope | Why |
-   |---|---|
-   | `app_mentions:read` | See `@bot` mentions |
-   | `channels:history` | Read public-channel messages |
-   | `channels:read` | List public channels |
-   | `chat:write` | Send replies |
-   | `files:read` | Download PDFs the user attaches |
-   | `files:write` | Upload images / files generated by `code_interpreter` |
-   | `groups:history` | Read private-channel messages |
-   | `groups:read` | List private channels |
-   | `im:history` | Read DMs |
-   | `im:read` | List DMs |
-   | `im:write` | Reply in DMs |
-   | `users:read` | Look up user `display_name` |
-
-### 4) Subscribe to events
-
-8. Left sidebar → **Event Subscriptions** → toggle **Enable Events** on.
-9. Under **Subscribe to bot events**, add:
-   - `app_mention` (required — bot @ events)
-   - `message.channels` (required for proactive participation in public channels)
-   - Optional: `message.groups`, `message.im` (private channels, DMs)
-
-### 5) Install to workspace + grab the Bot Token
-
-10. Left sidebar → **Install App** → **Install to Workspace** → authorize.
-11. After install, the page shows the **Bot User OAuth Token** starting with
-    `xoxb-...`. Copy it. This is your `SLACK_BOT_TOKEN`.
-
-### 6) Invite the bot into channels
-
-12. In any Slack channel you want the bot in, type `/invite @yourBotName`.
-13. To find a **channel ID** for env config (e.g. `DAILY_DIGEST_CHANNELS`),
-    right-click the channel name → **View channel details** → scroll to the
-    bottom; the `C01ABC...` line is the ID.
-14. To find a **workspace (team) ID** for `PROACTIVE_SERVERS`, the URL
-    `app.slack.com/client/T01XYZ.../...` contains it as the `T01XYZ...` part.
-
-### 7) Run
-
-```bash
-# In .env:
-#   PLATFORM=slack
-#   SLACK_BOT_TOKEN=xoxb-...
-#   SLACK_APP_TOKEN=xapp-...
-
-python slack_bot.py
-```
-
-You should see a log line like:
+Most variables are optional. Defaults assume an ML research group; change
+the community-framing block to retune.
 
 ```
-slack_bot: logged in user_id=U01... team=T01... (backend=anthropic)
+# Platform credentials
+DISCORD_TOKEN=...
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
+
+# LLM backend, pick one
+BACKEND=anthropic        # default. Claude Opus 4.7 / Sonnet 4.6 / Haiku 4.5.
+ANTHROPIC_API_KEY=sk-ant-...
+# or
+BACKEND=openai           # GPT-5.5 Pro / GPT-5.5 / GPT-4o-mini.
+OPENAI_API_KEY=sk-...
+
+# Community framing
+COMMUNITY_NAME=the channel
+COMMUNITY_DOMAIN=research
+SUBSTANTIVE_TOPICS=model architecture, training, papers, datasets, ...
+RELEVANT_LINK_DOMAINS=arxiv, github, X.com, huggingface, ...
+
+# Feature toggles
+PROFILES_ENABLED=true    # per-user profile build + auto-refresh
+ANNOTATOR_ENABLED=true   # sliding-window LLM annotations for retrieval
+
+# Digest. Fires 9am LA. Comma-separated channel IDs. Empty disables.
+DAILY_DIGEST_CHANNELS=
+WEEKLY_DIGEST_CHANNELS=
+DIGEST_CHANNELS=          # legacy fallback for both
+
+# Proactive (non-@ replies). Empty disables.
+PROACTIVE_CHANNELS=
+PROACTIVE_SERVERS=        # whole guild / workspace; channels auto-inherit
 ```
 
-@ the bot in a channel; it replies in-thread. Slack-flavored markdown is
-emitted automatically (single-asterisk `*bold*`, `<url|text>` links, no
-heading hashes — Slack doesn't render those).
-
----
-
-## Configuration (`.env`)
-
-### Required
-
-| Var | Example | Notes |
-|---|---|---|
-| `DISCORD_TOKEN` | `MTUw...` | Required if running `bot.py` (Discord) |
-| `SLACK_BOT_TOKEN` | `xoxb-...` | Required if running `slack_bot.py` (Slack); from step 11 |
-| `SLACK_APP_TOKEN` | `xapp-...` | Required if running `slack_bot.py`; from step 5 |
-| `ANTHROPIC_API_KEY` | `sk-ant-...` | Needed if `BACKEND=anthropic` |
-| `OPENAI_API_KEY` | `sk-proj-...` | Needed if `BACKEND=openai` |
-
-### Platform
-
-| Var | Default | Values | What it does |
-|---|---|---|---|
-| `PLATFORM` | `discord` | `discord` / `slack` | Selects which markdown dialect agent prompts emit (Discord uses `**bold**`, Slack uses `*bold*`, etc.). `slack_bot.py` force-sets `PLATFORM=slack` at startup, so you only need to set this manually if running Discord with a non-default config. |
-
-### Community identity
-
-These shape the bot's sense of what counts as "substantive content" (vs
-chitchat) in classifier + digest prompts. Defaults preserve the original
-ML-research vocabulary; override to point the bot at a different domain.
-
-| Var | Default | Example override |
-|---|---|---|
-| `COMMUNITY_NAME` | `the channel` | `ICLR DDoS`, `Frontend Guild`, `Design Crits` |
-| `COMMUNITY_DOMAIN` | `research` | `frontend engineering`, `DAO governance`, `product design` |
-| `SUBSTANTIVE_TOPICS` | ML-research vocabulary | `accessibility, design systems, performance, framework choice, browser APIs, ...` |
-| `RELEVANT_LINK_DOMAINS` | arxiv/github/HF/AI-lab blogs | `MDN, web.dev, github (frontend), figma blog, ...` |
-
-### Backend
-
-| Var | Default | Values | What it does |
-|---|---|---|---|
-| `BACKEND` | `anthropic` | `anthropic` / `openai` | Picks which LLM stack to use. Both share the same Mem0 vector store — swap freely without losing channel memory. |
-
-| Backend | Main agent | Annotator / Profile | Digest | Classifier | Mem0 internal |
-|---|---|---|---|---|---|
-| `anthropic` | Claude Opus 4.7 | Claude Sonnet 4.6 | Opus 4.7 | Opus 4.7 | Claude Haiku 4.5 |
-| `openai` | GPT-5.5 (Pro on user opt-in) | GPT-5.5 | GPT-5.5 Pro | GPT-5.5 Pro | GPT-4o-mini |
-
-For the OpenAI backend, users can request the heavier Pro model in a single
-reply by including phrases like `use pro`, `gpt-5.5-pro`, `pro mode`, or
-`think hard` in their `@`-mention message. Proactive replies always stay
-on the default.
-
-### Feature toggles
-
-| Var | Default | What it does |
-|---|---|---|
-| `PROFILES_ENABLED` | `true` | Build + auto-refresh per-user profiles. Off → no profile in @ reply context, no refresh tick. |
-| `ANNOTATOR_ENABLED` | `true` | Sliding-window English annotations of messages. Off → cheaper, but semantic search recall drops noticeably. |
-
-### Digest channels
-
-| Var | What it does |
-|---|---|
-| `DAILY_DIGEST_CHANNELS` | Comma-separated channel IDs that get a 9am-LA daily summary. |
-| `WEEKLY_DIGEST_CHANNELS` | Comma-separated channel IDs that get a Monday-9am-LA weekly summary. |
-| `DIGEST_CHANNELS` | Legacy fallback — used for both daily and weekly when the two above are unset. |
-
-Leave all three empty to disable digests.
-
-### Proactive participation
-
-| Var | What it does |
-|---|---|
-| `PROACTIVE_CHANNELS` | Comma-separated channel IDs where the bot may proactively reply to non-@ messages. |
-| `PROACTIVE_SERVERS` | Comma-separated guild (server) IDs where proactive is on for **every** text channel. New channels auto-inherit. |
-
-Empty both → proactive disabled. A non-@ message must pass an LLM classifier
-(6 substantive-content criteria) before the bot speaks; rate-limited to 8s
-debounce + 60s per-channel cooldown (same-speaker follow-ups bypass cooldown).
-
----
+On the OpenAI backend, users can ask for the heavier model in a single
+message by including "use pro", "pro mode", "think hard", or "best
+model". Proactive replies always run on the default.
 
 ## Running
 
-```bash
-# Discord:
+```
 coterie-discord
-
-# Slack:
 coterie-slack
 ```
 
-Or as a background process so you can close the terminal:
+Two independent processes. They share `mem0_data/` (the Chroma store)
+but write separate digest state files.
 
-```bash
-nohup coterie-discord > bot.log 2>&1 &
-nohup coterie-slack > slack.log 2>&1 &
-```
-
-The two processes are independent. They share `mem0_data/` (the Chroma
-vector store) but write digest state to separate files
-(`digest_state.json` for Discord, `digest_state_slack.json` for Slack)
-so each platform's 9am-LA daily / weekly run is tracked separately.
-
-**macOS sleep warning.** The daily / weekly digest cron only fires when
-the bot process is awake at the scheduled minute. macOS sleep cycles
-will skip the firing; the 10-min catch-up tick eventually backfills, but
-exact-time delivery requires running on a host that never sleeps. Options:
-
-- `caffeinate -i python bot.py` (keeps awake while the bot runs)
-- a separate Linux box / VPS / Fly.io machine
-- `pmset noidle` while running
-
----
-
-## CLI utilities
-
-| Script | Purpose |
-|---|---|
-| `python scripts/init_profiles.py [channel_id ...]` | One-shot rebuild of every (channel, author) profile. Useful after a prompt change or to bootstrap profiles for users the bot has never been @-ed by. |
-| `python -m coterie.claude.digest <channel_id> [daily\|weekly]` | Generate a digest immediately and print to stdout (no Discord post). Anthropic backend. |
-| `python -m coterie.gpt.digest <channel_id> [daily\|weekly]` | Same, OpenAI backend. |
-| `python -m coterie.claude.user_profile <channel_id> <author>` | Rebuild a single profile and print (Anthropic). |
-| `python -m coterie.gpt.user_profile <channel_id> <author>` | Same, OpenAI. |
-| `python scripts/dump_memory.py <channel_id>` | Dump all Mem0 records for a channel (debug). |
-| `python scripts/verify_filter_search.py` | Standalone test that seeds 4 records and exercises author/time filters end-to-end. |
-
----
+The daily and weekly digests fire on a 9am LA cron. On a laptop that
+sleeps overnight the timer misses, and a catch-up tick backfills within
+ten minutes of wake. For exact-time delivery, run on a host that stays
+awake or wrap with `caffeinate -i coterie-discord`.
 
 ## Architecture
 
 ```
 coterie/
-├── adapters/                 ← one entry point per chat platform
-│   ├── discord_adapter.py    ← discord.py event loop (bot.py was here)
-│   └── slack_adapter.py      ← slack_bolt Socket Mode (slack_bot.py was here)
-├── claude/                   ← Anthropic LLM variants (5 files)
-│   ├── agent.py, annotator.py, digest.py, proactive.py, user_profile.py
-├── gpt/                      ← OpenAI LLM variants (5 files)
-│   ├── agent.py, annotator.py, digest.py, proactive.py, user_profile.py
-├── backends.py               ← BACKEND env switch — re-exports from claude/ or gpt/
-├── config.py                 ← PLATFORM + COMMUNITY_* env + render()
-├── memory.py                 ← Mem0 wrapper, partitioned per channel
-└── web_fetch.py              ← httpx + trafilatura fetcher for OpenAI's missing web_fetch
+  adapters/
+    discord_adapter.py    discord.py event loop
+    slack_adapter.py      slack_bolt Socket Mode
+  claude/                 Anthropic variants (agent, annotator, digest, proactive, user_profile)
+  gpt/                    OpenAI variants (same five)
+  backends.py             BACKEND env switch
+  config.py               PLATFORM + COMMUNITY_* env + render()
+  memory.py               Mem0 wrapper, partitioned per channel
+  web_fetch.py            httpx + trafilatura fetcher
+scripts/
+  init_profiles.py
+  dump_memory.py
+  verify_filter_search.py
 ```
 
+Each adapter handles only its platform's SDK quirks. `backends.py` reads
+`BACKEND` at startup and re-exports the chosen LLM stack. `config.py`
+substitutes `{platform}`, `{community_domain}`, and other placeholders
+into prompts at module load.
+
+Mem0 partitions by channel ID. Records carry a `record_type` tag:
+`message`, `annotation`, `agent_reply`, `profile`. The agent's
+`search_memories` tool drops `profile` records before returning, so one
+user's profile cannot leak into a reply to another.
+
+## CLI
+
 ```
-   Discord gateway              Slack Socket Mode
-         │                              │
-         ▼                              ▼
-  discord_adapter            slack_adapter
-         │                              │
-         └───────────────┬──────────────┘
-                         ▼
-                    backends.BACKEND  ← env switch
-                         │
-              ┌──────────┴──────────┐
-              ▼                     ▼
-        coterie.claude.*        coterie.gpt.*
-       (Agent, Annotator, Digest, Proactive, ProfileBuilder)
-                          │
-                  config.render()       ← inject {platform},
-                          │                 {community_domain},
-                          ▼                 {formatting_rules}, etc.
-                       BotMemory
-                          │
-              ┌───────────┼───────────┐
-              ▼           ▼           ▼
-        Chroma store  HF embedder   internal LLM
-        (./mem0_data)               (Haiku / GPT-4o-mini)
+python scripts/init_profiles.py [channel_id ...]
+python -m coterie.claude.digest <channel_id> [daily|weekly]
+python -m coterie.gpt.digest <channel_id> [daily|weekly]
+python scripts/dump_memory.py <channel_id>
+python scripts/verify_filter_search.py
 ```
-
-Two adapters, one core. The platform adapter
-(`coterie.adapters.discord_adapter` / `coterie.adapters.slack_adapter`)
-owns SDK-specific concerns: event subscription, message send, file
-upload, mention syntax. Everything below it is platform-agnostic.
-
-`coterie.backends` reads the `BACKEND` env var at startup and re-exports
-the Anthropic or OpenAI variants of each LLM-touching module (from
-`coterie.claude.*` or `coterie.gpt.*`), so neither adapter cares which
-LLM backs it.
-
-`coterie.config` centralizes platform-specific markdown rules (Discord
-vs Slack mrkdwn dialects) and community-domain vocabulary, injecting them
-into the agent / classifier / digest / annotator / profile prompts via
-`config.render()`. Defaults preserve the original ML-research-on-Discord
-behavior; override via env vars for other communities and platforms.
-
-The vector store is partitioned per channel (Mem0 `user_id = channel_id`).
-Records carry a `record_type` tag: `message` / `annotation` / `agent_reply` /
-`profile`. The agent's `search_memories` tool excludes `profile` records to
-prevent cross-user profile leakage; other types are surfaced with their tag so
-the model can weigh them appropriately.
-
----
 
 ## License
 
-MIT (do whatever, attribution appreciated but not required).
+MIT.
