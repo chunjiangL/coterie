@@ -152,4 +152,4 @@ python scripts/verify_filter_search.py
 
 ## License
 
-MIT.
+MIT, see [LICENSE](LICENSE).
