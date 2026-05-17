@@ -99,7 +99,10 @@ proactive = ProactiveClassifier()
 _BOT_USER_ID: str | None = None
 
 # Per-channel record of when daily/weekly digest last ran. Same shape as bot.py.
-DIGEST_STATE_FILE = Path(__file__).parent / "digest_state_slack.json"
+DIGEST_STATE_FILE = Path(
+    os.environ.get("DIGEST_STATE_FILE_SLACK")
+    or Path.cwd() / "digest_state_slack.json"
+)
 
 
 def _load_digest_state() -> dict[str, dict[str, str]]:

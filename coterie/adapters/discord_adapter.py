@@ -116,7 +116,16 @@ async def profile_refresh_tick() -> None:
 # Persisted across bot restarts so wake-from-sleep doesn't double-post,
 # and so a bot that was asleep at 9am LA still fires the digest when
 # the catch-up tick runs after wake.
-DIGEST_STATE_FILE = Path(__file__).parent / "digest_state.json"
+# Pin state to the working directory the user launches the bot from, not
+# the package install path. After the coterie/ reorg, Path(__file__).parent
+# resolved into the package itself (coterie/adapters/), which silently
+# orphaned the existing state file at repo root and caused every daily
+# digest to re-fire on the next restart. Allow env override for ops who
+# want to put runtime state somewhere else.
+DIGEST_STATE_FILE = Path(
+    os.environ.get("DIGEST_STATE_FILE")
+    or Path.cwd() / "digest_state.json"
+)
 
 
 def _load_digest_state() -> dict[str, dict[str, str]]:
