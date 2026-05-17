@@ -98,6 +98,43 @@ proactive = ProactiveClassifier()
 # Slack adds to app_mention events ("<@U01ABC...> hello" → "hello").
 _BOT_USER_ID: str | None = None
 
+# Spam guard for @-mention path. Same shape as Discord adapter; see comments
+# there for rationale.
+MENTION_LIMIT = 3
+MENTION_WINDOW_SEC = 30.0
+MENTION_LOCKOUT_SEC = 60.0
+_mention_history: dict[tuple[str, str], list[float]] = {}
+_mention_lockout: dict[tuple[str, str], float] = {}
+_mention_warned: dict[tuple[str, str], bool] = {}
+
+
+def _mention_should_block(channel_id: str, user_id: str) -> tuple[bool, bool]:
+    import time as _time
+    now = _time.time()
+    key = (channel_id, user_id)
+    lockout_until = _mention_lockout.get(key, 0.0)
+    if now < lockout_until:
+        if not _mention_warned.get(key):
+            _mention_warned[key] = True
+            return True, True
+        return True, False
+    elif lockout_until > 0:
+        _mention_lockout.pop(key, None)
+        _mention_warned.pop(key, None)
+    history = _mention_history.setdefault(key, [])
+    cutoff = now - MENTION_WINDOW_SEC
+    history[:] = [t for t in history if t > cutoff]
+    history.append(now)
+    if len(history) > MENTION_LIMIT:
+        _mention_lockout[key] = now + MENTION_LOCKOUT_SEC
+        _mention_warned[key] = True
+        log.warning(
+            "mention spam lockout: channel=%s user=%s (%d hits in %.0fs)",
+            channel_id, user_id, len(history), MENTION_WINDOW_SEC,
+        )
+        return True, True
+    return False, False
+
 # Per-channel record of when daily/weekly digest last ran. Same shape as bot.py.
 DIGEST_STATE_FILE = Path(
     os.environ.get("DIGEST_STATE_FILE_SLACK")
@@ -480,6 +517,18 @@ async def on_mention(event: dict[str, Any], say: Any) -> None:
     files = event.get("files") or []
     await _store_message(channel=channel, user=user, text=event.get("text", ""),
                          ts=event["ts"], files=files, is_self=False)
+    blocked, warn = _mention_should_block(channel, user)
+    if blocked:
+        if warn:
+            await say(
+                text=(
+                    "Slow down a bit — too many @s in a row. I'll be back in a "
+                    "minute. If you need something urgent, edit your last "
+                    "message instead of sending new ones."
+                ),
+                thread_ts=thread_ts,
+            )
+        return
     await _handle_query(channel=channel, user=user, text=text, files=files,
                         thread_ts=thread_ts, say=say)
 

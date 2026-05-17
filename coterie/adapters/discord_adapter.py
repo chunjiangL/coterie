@@ -77,6 +77,62 @@ ANNOTATOR_ENABLED: bool = _bool_env("ANNOTATOR_ENABLED", default=True)
 LA = ZoneInfo("America/Los_Angeles")
 DIGEST_TIME = _dt.time(hour=9, minute=0, tzinfo=LA)
 
+# Spam guard for @-mention path. If a single user @-s the bot more than
+# MENTION_LIMIT times within MENTION_WINDOW_SEC, lock them out for
+# MENTION_LOCKOUT_SEC and reply once with a firm note. Without this,
+# anyone can drain the API key by spamming @ + an expensive question.
+MENTION_LIMIT = 3
+MENTION_WINDOW_SEC = 30.0
+MENTION_LOCKOUT_SEC = 60.0
+
+# (channel_id, user_id) → list[recent timestamps]. Trimmed per-call.
+_mention_history: dict[tuple[str, str], list[float]] = {}
+# (channel_id, user_id) → unix when lockout ends; 0 = no lockout.
+_mention_lockout: dict[tuple[str, str], float] = {}
+# (channel_id, user_id) → True if we've already sent the warning this
+# lockout cycle. Reset when lockout expires.
+_mention_warned: dict[tuple[str, str], bool] = {}
+
+
+def _mention_should_block(channel_id: str, user_id: str) -> tuple[bool, bool]:
+    """Returns (block_now, should_send_warning_message).
+
+    block_now=True means: silently drop the @ (or send warning once if
+    warn flag is True). block_now=False means: process normally.
+    """
+    import time as _time
+    now = _time.time()
+    key = (channel_id, user_id)
+
+    # Active lockout?
+    lockout_until = _mention_lockout.get(key, 0.0)
+    if now < lockout_until:
+        if not _mention_warned.get(key):
+            _mention_warned[key] = True
+            return True, True   # block, but emit one warning
+        return True, False      # block silently
+    elif lockout_until > 0:
+        # Lockout just expired — clear flags.
+        _mention_lockout.pop(key, None)
+        _mention_warned.pop(key, None)
+
+    # Slide window for this user.
+    history = _mention_history.setdefault(key, [])
+    cutoff = now - MENTION_WINDOW_SEC
+    history[:] = [t for t in history if t > cutoff]
+    history.append(now)
+
+    if len(history) > MENTION_LIMIT:
+        # Trip lockout.
+        _mention_lockout[key] = now + MENTION_LOCKOUT_SEC
+        _mention_warned[key] = True
+        log.warning(
+            "mention spam lockout: channel=%s user=%s (%d hits in %.0fs)",
+            channel_id, user_id, len(history), MENTION_WINDOW_SEC,
+        )
+        return True, True
+    return False, False
+
 
 def _proactive_channel_enabled(message: discord.Message) -> bool:
     if str(message.channel.id) in PROACTIVE_CHANNELS:
@@ -454,6 +510,20 @@ async def on_message(message: discord.Message) -> None:
             proactive.schedule(
                 str(message.channel.id),
                 _proactive_dispatch(message),
+            )
+        return
+
+    # Spam guard before any LLM call. Heavy traffic on the @ path can drain
+    # the API budget fast (xhigh effort + 4 tools per reply).
+    blocked, warn = _mention_should_block(
+        str(message.channel.id), str(message.author.id)
+    )
+    if blocked:
+        if warn:
+            await message.reply(
+                "Slow down a bit — too many @s in a row. I'll be back in a minute. "
+                "If you need something urgent, edit your last message instead of "
+                "sending new ones."
             )
         return
 

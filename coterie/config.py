@@ -34,6 +34,36 @@ if PLATFORM not in ("discord", "slack"):
     )
 
 
+# Log verbosity. Default OFF: log lines that would otherwise include
+# message text, profile contents, or other PII show only a length
+# placeholder. Set LOG_VERBOSE=true for dev debugging. Keep OFF in
+# production / multi-tenant hosts where bot.log may be ingested by
+# cloud logging or error-tracking SDKs.
+LOG_VERBOSE = os.environ.get("LOG_VERBOSE", "false").lower().strip() in (
+    "1", "true", "yes", "on",
+)
+
+
+def safe_log(text: str | None, *, max_chars: int = 200) -> str:
+    """Return a logging-safe representation of user-content text.
+
+    LOG_VERBOSE=true → first max_chars of text (with ellipsis if cut).
+    LOG_VERBOSE=false → ``<N chars>`` placeholder, no content.
+
+    Use for: profile bodies, message text, agent reply text, classifier
+    reason strings, search queries. Anything originating from a user or
+    generated about a specific user."""
+    if text is None:
+        return "<None>"
+    if not isinstance(text, str):
+        text = str(text)
+    if LOG_VERBOSE:
+        if len(text) > max_chars:
+            return text[:max_chars] + f"... ({len(text)} chars)"
+        return text
+    return f"<{len(text)} chars>"
+
+
 # ─── Community identity ─────────────────────────────────────────────
 # Human-readable label. Currently only injected into prompts; could later
 # be used in greeting lines, digest headers, etc.

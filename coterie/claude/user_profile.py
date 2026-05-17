@@ -208,8 +208,8 @@ class ProfileBuilder:
             )
         except Exception:
             log.exception("profile upsert failed for %s/%s", channel_id, author)
-        log.info("profile built: author=%s n_msgs=%d body=%r",
-                 author, len(msgs), text[:200])
+        log.info("profile built: author=%s n_msgs=%d body=%s",
+                 author, len(msgs), config.safe_log(text))
         return text
 
     async def maybe_refresh_channel(self, channel_id: str) -> None:
