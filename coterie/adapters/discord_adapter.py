@@ -504,7 +504,22 @@ async def on_message(message: discord.Message) -> None:
     if is_self:
         return
 
-    if not (client.user in message.mentions or isinstance(message.channel, discord.DMChannel)):
+    # Discord "Reply" with the @ toggle OFF doesn't add the bot to
+    # message.mentions, so a reply targeted at a bot message would
+    # otherwise fall through to the proactive path. Catch that case:
+    # if the user is explicitly replying to one of our messages, treat
+    # it as a mention.
+    is_reply_to_bot = False
+    if message.reference is not None and client.user is not None:
+        ref = message.reference.resolved
+        if ref is not None and getattr(ref, "author", None) is not None:
+            is_reply_to_bot = ref.author.id == client.user.id
+
+    if not (
+        client.user in message.mentions
+        or isinstance(message.channel, discord.DMChannel)
+        or is_reply_to_bot
+    ):
         # Not @-ed. Maybe still worth jumping in proactively?
         if message.content and _proactive_channel_enabled(message):
             proactive.schedule(

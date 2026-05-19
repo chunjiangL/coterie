@@ -281,6 +281,40 @@ def _strip_mention(text: str) -> str:
     return re.sub(rf"<@{re.escape(_BOT_USER_ID)}>", "", text).strip()
 
 
+# Cache of thread_ts → bool (parent message author == bot). Slack doesn't
+# expose this on the message event, so we fetch via conversations.replies
+# once per thread and cache for the bot's lifetime. Thread root authorship
+# can't change, so cache is safe.
+_thread_root_is_bot_cache: dict[str, bool] = {}
+
+
+async def _thread_root_is_bot(channel: str, thread_ts: str) -> bool:
+    """True iff the parent message of this thread was authored by us.
+
+    Slack threads have no "reply-to-bot" event; this is how we detect when
+    a user clicked Reply on a bot message instead of typing @bot."""
+    cached = _thread_root_is_bot_cache.get(thread_ts)
+    if cached is not None:
+        return cached
+    if not _BOT_USER_ID:
+        return False
+    try:
+        resp = await app.client.conversations_replies(
+            channel=channel, ts=thread_ts, limit=1, inclusive=True,
+        )
+        messages = resp.get("messages") or []
+        if not messages:
+            _thread_root_is_bot_cache[thread_ts] = False
+            return False
+        parent = messages[0]
+        is_bot = parent.get("user") == _BOT_USER_ID or parent.get("bot_id") is not None
+        _thread_root_is_bot_cache[thread_ts] = is_bot
+        return is_bot
+    except Exception:
+        log.exception("conversations.replies failed for thread %s", thread_ts)
+        return False
+
+
 def _proactive_channel_enabled(channel_id: str, team_id: str | None) -> bool:
     if channel_id in PROACTIVE_CHANNELS:
         return True
@@ -555,18 +589,48 @@ async def on_message(event: dict[str, Any]) -> None:
                          files=files, is_self=is_self)
     if is_self:
         return
-    # @ mentions go to app_mention; if the bot user_id appears in the text
-    # OR this is a DM (channel starts with 'D'), skip — handled there.
+    # Explicit @ mentions go to app_mention — skip the duplicate here.
     if _BOT_USER_ID and f"<@{_BOT_USER_ID}>" in text:
         return
-    # Proactive only on regular channels in allow-list.
     if not text:
         return
+
+    thread_ts = event.get("thread_ts")
+    # Discord-style "Reply" → in Slack that's "reply in thread". If the
+    # parent of the thread is a bot message, the user is addressing the
+    # bot even without re-@ing. Treat as a mention.
+    if thread_ts and thread_ts != ts:
+        if await _thread_root_is_bot(channel, thread_ts):
+            blocked, warn = _mention_should_block(channel, user)
+            if blocked:
+                if warn:
+                    await app.client.chat_postMessage(
+                        channel=channel,
+                        thread_ts=thread_ts,
+                        text=(
+                            "Slow down a bit — too many @s in a row. I'll "
+                            "be back in a minute. If you need something "
+                            "urgent, edit your last message instead of "
+                            "sending new ones."
+                        ),
+                    )
+                return
+            files = event.get("files") or []
+            async def say(text: str, thread_ts: str | None = None) -> None:
+                await app.client.chat_postMessage(
+                    channel=channel, text=text, thread_ts=thread_ts,
+                )
+            await _handle_query(
+                channel=channel, user=user, text=text, files=files,
+                thread_ts=thread_ts, say=say,
+            )
+            return
+
     team_id = event.get("team")
     if _proactive_channel_enabled(channel, team_id):
         proactive.schedule(
             channel,
-            _proactive_dispatch(channel, user, text, event.get("thread_ts")),
+            _proactive_dispatch(channel, user, text, thread_ts),
         )
 
 
