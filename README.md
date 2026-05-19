@@ -83,6 +83,7 @@ RELEVANT_LINK_DOMAINS=arxiv, github, X.com, huggingface, ...
 # Feature toggles
 PROFILES_ENABLED=true    # per-user + per-channel profile build + auto-refresh
 ANNOTATOR_ENABLED=true   # sliding-window LLM annotations for retrieval
+DIGEST_ENABLED=true      # daily and weekly digests; false skips all digest ticks
 
 # Digest. Fires 9am LA. Comma-separated channel IDs. Empty disables.
 DAILY_DIGEST_CHANNELS=

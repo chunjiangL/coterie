@@ -87,6 +87,11 @@ PROFILES_ENABLED: bool = _bool_env("PROFILES_ENABLED", default=True)
 # buffer keeps filling so proactive's recent_n() still works. Trade-off:
 # semantic search loses the annotation-layer surface (~half the recall lift).
 ANNOTATOR_ENABLED: bool = _bool_env("ANNOTATOR_ENABLED", default=True)
+# DIGEST: daily/weekly summaries. Off → no digest ticks start at all,
+# regardless of DAILY_DIGEST_CHANNELS / WEEKLY_DIGEST_CHANNELS contents.
+# When on, channel-list env vars still control which channels receive
+# which digest (and empty lists also disable individually).
+DIGEST_ENABLED: bool = _bool_env("DIGEST_ENABLED", default=True)
 
 LA = ZoneInfo("America/Los_Angeles")
 DIGEST_TIME = _dt.time(hour=9, minute=0, tzinfo=LA)
@@ -481,23 +486,26 @@ async def on_ready() -> None:
     else:
         log.info("proactive: no PROACTIVE_CHANNELS/SERVERS env, disabled")
 
-    if DAILY_DIGEST_CHANNELS:
-        log.info("daily digest: channels=%s at 9am LA", sorted(DAILY_DIGEST_CHANNELS))
-        if not daily_digest_tick.is_running():
-            daily_digest_tick.start()
+    if not DIGEST_ENABLED:
+        log.info("digest: disabled by DIGEST_ENABLED=false")
     else:
-        log.info("daily digest: no DAILY_DIGEST_CHANNELS, disabled")
-    if WEEKLY_DIGEST_CHANNELS:
-        log.info(
-            "weekly digest: channels=%s Mon 9am LA", sorted(WEEKLY_DIGEST_CHANNELS)
-        )
-        if not weekly_digest_tick.is_running():
-            weekly_digest_tick.start()
-    else:
-        log.info("weekly digest: no WEEKLY_DIGEST_CHANNELS, disabled")
-    if DIGEST_CHANNELS:
-        if not digest_catchup_tick.is_running():
-            digest_catchup_tick.start()
+        if DAILY_DIGEST_CHANNELS:
+            log.info("daily digest: channels=%s at 9am LA", sorted(DAILY_DIGEST_CHANNELS))
+            if not daily_digest_tick.is_running():
+                daily_digest_tick.start()
+        else:
+            log.info("daily digest: no DAILY_DIGEST_CHANNELS, disabled")
+        if WEEKLY_DIGEST_CHANNELS:
+            log.info(
+                "weekly digest: channels=%s Mon 9am LA", sorted(WEEKLY_DIGEST_CHANNELS)
+            )
+            if not weekly_digest_tick.is_running():
+                weekly_digest_tick.start()
+        else:
+            log.info("weekly digest: no WEEKLY_DIGEST_CHANNELS, disabled")
+        if DIGEST_CHANNELS:
+            if not digest_catchup_tick.is_running():
+                digest_catchup_tick.start()
 
 
 @client.event

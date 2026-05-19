@@ -84,6 +84,7 @@ PROACTIVE_SERVERS = _csv_set("PROACTIVE_SERVERS")  # Slack: team_id
 PUBLIC_CHANNELS = _csv_set("PUBLIC_CHANNELS")
 PROFILES_ENABLED = _bool_env("PROFILES_ENABLED", default=True)
 ANNOTATOR_ENABLED = _bool_env("ANNOTATOR_ENABLED", default=True)
+DIGEST_ENABLED = _bool_env("DIGEST_ENABLED", default=True)
 
 LA = ZoneInfo("America/Los_Angeles")
 
@@ -259,7 +260,7 @@ async def _periodic_ticks() -> None:
             if PROFILES_ENABLED and now - last_profile >= 600:
                 await _refresh_profiles_all_channels()
                 last_profile = now
-            if DIGEST_CHANNELS and now - last_digest >= 600:
+            if DIGEST_ENABLED and DIGEST_CHANNELS and now - last_digest >= 600:
                 now_la = _dt.datetime.now(LA)
                 await _run_daily_if_pending(now_la)
                 await _run_weekly_if_pending(now_la)
@@ -770,10 +771,13 @@ async def _main() -> None:
             sorted(PROACTIVE_CHANNELS), sorted(PROACTIVE_SERVERS),
             int(_PDB), int(_PCD),
         )
-    if DAILY_DIGEST_CHANNELS:
-        log.info("daily digest: channels=%s at 9am LA", sorted(DAILY_DIGEST_CHANNELS))
-    if WEEKLY_DIGEST_CHANNELS:
-        log.info("weekly digest: channels=%s Mon 9am LA", sorted(WEEKLY_DIGEST_CHANNELS))
+    if not DIGEST_ENABLED:
+        log.info("digest: disabled by DIGEST_ENABLED=false")
+    else:
+        if DAILY_DIGEST_CHANNELS:
+            log.info("daily digest: channels=%s at 9am LA", sorted(DAILY_DIGEST_CHANNELS))
+        if WEEKLY_DIGEST_CHANNELS:
+            log.info("weekly digest: channels=%s Mon 9am LA", sorted(WEEKLY_DIGEST_CHANNELS))
     log.info("annotator: %s, profiles: %s",
              "enabled" if ANNOTATOR_ENABLED else "disabled",
              "enabled" if PROFILES_ENABLED else "disabled")
