@@ -121,6 +121,49 @@ class BotMemory:
             infer=False,
         )
 
+    async def add_reaction(
+        self,
+        *,
+        channel_id: str,
+        reactor_name: str,
+        reactor_id: str,
+        emoji: str,
+        target_message_id: str,
+        target_excerpt: str,
+        timestamp: str,
+    ) -> None:
+        """Record a human reaction emoji left on one of the bot's messages.
+
+        Stored as record_type='reaction' — an implicit-feedback signal layer
+        the profile builder can consult ("Alice 👎'd two of my last replies").
+        Excluded from list_window so it never lands in digest output.
+        """
+        excerpt = (target_excerpt or "").strip().replace("\n", " ")
+        if len(excerpt) > 200:
+            excerpt = excerpt[:200] + "..."
+        content = (
+            f"{reactor_name} reacted {emoji} to bot reply: {excerpt}"
+            if excerpt
+            else f"{reactor_name} reacted {emoji} to bot reply"
+        )
+        await asyncio.to_thread(
+            self._m.add,
+            content,
+            user_id=channel_id,
+            metadata={
+                "record_type": "reaction",
+                "channel_id": channel_id,
+                "message_id": target_message_id,
+                "author": reactor_name,
+                "author_id": reactor_id,
+                "emoji": emoji,
+                "timestamp": timestamp,
+                "timestamp_unix": _to_unix(timestamp),
+                "is_pinned": False,
+            },
+            infer=False,
+        )
+
     async def list_by_author(
         self,
         *,
@@ -238,7 +281,8 @@ class BotMemory:
         time window, not the top-k semantically-relevant hits.
 
         Profile records are excluded — they hold personal user info that
-        must not leak into digest output.
+        must not leak into digest output. Reaction records are excluded too
+        — they're a signal layer for profile builds, not chat substance.
         """
         base_filter: dict[str, Any] = {
             "user_id": channel_id,
@@ -255,7 +299,7 @@ class BotMemory:
         results = _unwrap(hits)
         return [
             r for r in results
-            if (r.get("metadata") or {}).get("record_type") != "profile"
+            if (r.get("metadata") or {}).get("record_type") not in ("profile", "reaction")
         ]
 
     async def search(

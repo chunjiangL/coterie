@@ -42,11 +42,11 @@ Socket Mode: toggle on, generate an app-level token with
 OAuth & Permissions, Bot Token Scopes: `app_mentions:read`,
 `channels:history`, `channels:read`, `chat:write`, `files:read`,
 `files:write`, `groups:history`, `groups:read`, `im:history`, `im:read`,
-`im:write`, `users:read`.
+`im:write`, `reactions:read`, `users:read`.
 
-Event Subscriptions: enable, subscribe to bot events `app_mention` and
-`message.channels`. Add `message.groups` and `message.im` if you want the
-bot in private channels or DMs.
+Event Subscriptions: enable, subscribe to bot events `app_mention`,
+`message.channels`, and `reaction_added`. Add `message.groups` and
+`message.im` if you want the bot in private channels or DMs.
 
 Install App, Install to Workspace, copy the Bot User OAuth Token (starts
 with `xoxb-`). This is `SLACK_BOT_TOKEN`.

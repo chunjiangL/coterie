@@ -579,6 +579,52 @@ async def on_message(message: discord.Message) -> None:
     await _send_reply(message, reply_text, files)
 
 
+@client.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
+    """Record reactions left on the bot's own messages as implicit feedback.
+
+    Filters: skip self-reactions; skip reactions on non-bot messages. Uses
+    the *raw* event so it fires for messages older than the bot's cache,
+    not just for cached ones.
+    """
+    if client.user is None or payload.user_id == client.user.id:
+        return
+    channel = client.get_channel(payload.channel_id)
+    if channel is None:
+        try:
+            channel = await client.fetch_channel(payload.channel_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+    try:
+        target = await channel.fetch_message(payload.message_id)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return
+    if target.author.id != client.user.id:
+        return  # only bot-message reactions are signal
+
+    reactor = payload.member
+    if reactor is None:
+        try:
+            reactor = await client.fetch_user(payload.user_id)
+        except (discord.NotFound, discord.HTTPException):
+            return
+    reactor_name = getattr(reactor, "display_name", None) or getattr(reactor, "name", str(payload.user_id))
+
+    now_iso = _dt.datetime.now(tz=_dt.timezone.utc).isoformat()
+    try:
+        await memory.add_reaction(
+            channel_id=str(payload.channel_id),
+            reactor_name=reactor_name,
+            reactor_id=str(payload.user_id),
+            emoji=str(payload.emoji),
+            target_message_id=str(payload.message_id),
+            target_excerpt=target.content or "",
+            timestamp=now_iso,
+        )
+    except Exception:
+        log.exception("memory.add_reaction failed")
+
+
 async def _build_attachment_blocks(
     pdfs: list[discord.Attachment],
 ) -> list[dict[str, Any]]:

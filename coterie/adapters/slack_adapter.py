@@ -634,6 +634,61 @@ async def on_message(event: dict[str, Any]) -> None:
         )
 
 
+@app.event("reaction_added")
+async def on_reaction_added(event: dict[str, Any]) -> None:
+    """Record reactions on bot messages as implicit feedback.
+
+    Filters: only `item.type == 'message'`; skip self-reactions; require
+    `item_user` (the original poster) to be the bot.
+    """
+    if event.get("item", {}).get("type") != "message":
+        return
+    reactor = event.get("user")
+    item_user = event.get("item_user")
+    if not reactor or reactor == _BOT_USER_ID:
+        return
+    if not _BOT_USER_ID or item_user != _BOT_USER_ID:
+        return
+
+    item = event["item"]
+    channel = item["channel"]
+    ts = item["ts"]
+
+    excerpt = ""
+    try:
+        resp = await app.client.conversations_history(
+            channel=channel, latest=ts, limit=1, inclusive=True,
+        )
+        messages = resp.get("messages") or []
+        if messages:
+            excerpt = (messages[0].get("text") or "")[:200]
+    except Exception:
+        log.exception("conversations.history failed during reaction_added")
+
+    info = None
+    try:
+        info = await app.client.users_info(user=reactor)
+    except Exception:
+        pass
+    display = (
+        ((info or {}).get("user") or {}).get("profile") or {}
+    ).get("display_name") or reactor
+
+    now_iso = _dt.datetime.now(tz=_dt.timezone.utc).isoformat()
+    try:
+        await memory.add_reaction(
+            channel_id=channel,
+            reactor_name=display,
+            reactor_id=reactor,
+            emoji=f":{event.get('reaction', '')}:",
+            target_message_id=ts,
+            target_excerpt=excerpt,
+            timestamp=now_iso,
+        )
+    except Exception:
+        log.exception("memory.add_reaction failed")
+
+
 @app.event("file_shared")
 async def on_file_shared(event: dict[str, Any]) -> None:
     # No-op — file_share comes through message event already.
