@@ -251,6 +251,51 @@ class BotMemory:
             infer=False,
         )
 
+    async def get_channel_profile(
+        self, *, channel_id: str
+    ) -> dict[str, Any] | None:
+        hits = await asyncio.to_thread(
+            self._m.get_all,
+            filters={"user_id": channel_id, "record_type": "channel_profile"},
+            limit=1,
+        )
+        results = _unwrap(hits)
+        return results[0] if results else None
+
+    async def upsert_channel_profile(
+        self,
+        *,
+        channel_id: str,
+        text: str,
+        built_from_n_msgs: int = 0,
+    ) -> None:
+        """Replace channel profile blurb or insert if missing.
+
+        Mirrors upsert_profile but keyed only by channel — there's one
+        channel_profile per channel, not per-author.
+        """
+        existing = await self.get_channel_profile(channel_id=channel_id)
+        if existing:
+            await asyncio.to_thread(self._m.delete, memory_id=existing["id"])
+        now_iso = datetime.now().astimezone().isoformat()
+        now_unix = _to_unix(now_iso)
+        await asyncio.to_thread(
+            self._m.add,
+            text,
+            user_id=channel_id,
+            metadata={
+                "record_type": "channel_profile",
+                "channel_id": channel_id,
+                "author": "_channel",
+                "timestamp": now_iso,
+                "timestamp_unix": now_unix,
+                "last_built_unix": now_unix,
+                "built_from_n_msgs": built_from_n_msgs,
+                "is_pinned": False,
+            },
+            infer=False,
+        )
+
     async def mark_pinned(self, *, channel_id: str, message_id: str) -> None:
         hits = await asyncio.to_thread(
             self._m.get_all,
@@ -299,7 +344,8 @@ class BotMemory:
         results = _unwrap(hits)
         return [
             r for r in results
-            if (r.get("metadata") or {}).get("record_type") not in ("profile", "reaction")
+            if (r.get("metadata") or {}).get("record_type")
+            not in ("profile", "channel_profile", "reaction")
         ]
 
     async def search(

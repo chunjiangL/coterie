@@ -44,7 +44,15 @@ os.environ["PLATFORM"] = "slack"
 from slack_bolt.app.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
-from coterie.backends import BACKEND, Agent, Annotator, Digest, ProactiveClassifier, ProfileBuilder
+from coterie.backends import (
+    BACKEND,
+    Agent,
+    Annotator,
+    ChannelProfileBuilder,
+    Digest,
+    ProactiveClassifier,
+    ProfileBuilder,
+)
 from coterie.memory import BotMemory
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -92,6 +100,7 @@ agent = Agent(memory=memory)
 annotator = Annotator(memory=memory)
 digest = Digest(memory=memory)
 profile_builder = ProfileBuilder(memory=memory)
+channel_profile_builder = ChannelProfileBuilder(memory=memory)
 proactive = ProactiveClassifier()
 
 # Bot user ID, populated once at startup. Used to strip the @-mention prefix
@@ -259,9 +268,10 @@ async def _periodic_ticks() -> None:
 
 
 async def _refresh_profiles_all_channels() -> None:
-    """Walk every channel the bot has memory for and rebuild stale profiles.
-    Slack doesn't expose a member-channels list as easily as Discord; we
-    iterate over channels we've seen messages from instead."""
+    """Walk every channel the bot has memory for and rebuild stale profiles
+    (both user-level and channel-level). Slack doesn't expose a member-
+    channels list as easily as Discord; we iterate over channels the bot
+    is in via users_conversations."""
     try:
         resp = await app.client.users_conversations(types="public_channel,private_channel", limit=200)
         channels = resp.get("channels", []) or []
@@ -272,6 +282,7 @@ async def _refresh_profiles_all_channels() -> None:
         cid = ch.get("id")
         if cid:
             await profile_builder.maybe_refresh_channel(cid)
+            await channel_profile_builder.maybe_refresh_channel(cid)
 
 
 def _strip_mention(text: str) -> str:
@@ -377,11 +388,18 @@ async def _handle_query(
     attachments_payload = await _download_files(files)
 
     asker_profile: str | None = None
+    channel_summary: str | None = None
     if PROFILES_ENABLED:
         try:
             asker_profile = await profile_builder.ensure(channel_id=channel, author=display)
         except Exception:
             log.exception("profile lookup failed")
+        # Skip channel summary for IM/DM channels — nothing to summarize.
+        if not channel.startswith("D"):
+            try:
+                channel_summary = await channel_profile_builder.ensure(channel_id=channel)
+            except Exception:
+                log.exception("channel profile lookup failed")
 
     try:
         reply_text, generated = await agent.reply(
@@ -389,6 +407,7 @@ async def _handle_query(
             channel_id=channel,
             asker=display,
             asker_profile=asker_profile,
+            channel_summary=channel_summary,
             attachments=attachments_payload,
         )
     except Exception:
@@ -476,16 +495,22 @@ async def _proactive_dispatch(channel: str, user: str, text: str, thread_ts: str
 
     recent_msgs = annotator.recent_n(channel, n=10)
     asker_profile: str | None = None
+    channel_summary: str | None = None
     if PROFILES_ENABLED:
         try:
             asker_profile = await profile_builder.ensure(channel_id=channel, author=display)
         except Exception:
             log.exception("proactive: profile lookup failed")
+        try:
+            channel_summary = await channel_profile_builder.ensure(channel_id=channel)
+        except Exception:
+            log.exception("proactive: channel profile lookup failed")
 
     decision = await proactive.evaluate(
         trigger_msg_text=text,
         asker=display,
         asker_profile=asker_profile,
+        channel_summary=channel_summary,
         recent_msgs=recent_msgs,
     )
     if not decision or not decision.get("fire"):
@@ -510,6 +535,7 @@ async def _proactive_dispatch(channel: str, user: str, text: str, thread_ts: str
             channel_id=channel,
             asker=display,
             asker_profile=asker_profile,
+            channel_summary=channel_summary,
             mode="proactive",
             recent_context=recent_msgs,
             prior_relevant=prior_relevant,

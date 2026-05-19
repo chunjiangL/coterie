@@ -19,12 +19,14 @@ BACKEND = os.environ.get("BACKEND", "anthropic").lower().strip()
 if BACKEND == "openai":
     from coterie.gpt.agent import Agent
     from coterie.gpt.annotator import Annotator
+    from coterie.gpt.channel_profile import ChannelProfileBuilder
     from coterie.gpt.digest import Digest
     from coterie.gpt.proactive import ProactiveClassifier
     from coterie.gpt.user_profile import ProfileBuilder
 elif BACKEND == "anthropic":
     from coterie.claude.agent import Agent
     from coterie.claude.annotator import Annotator
+    from coterie.claude.channel_profile import ChannelProfileBuilder
     from coterie.claude.digest import Digest
     from coterie.claude.proactive import ProactiveClassifier
     from coterie.claude.user_profile import ProfileBuilder
@@ -37,6 +39,7 @@ __all__ = [
     "BACKEND",
     "Agent",
     "Annotator",
+    "ChannelProfileBuilder",
     "Digest",
     "ProactiveClassifier",
     "ProfileBuilder",

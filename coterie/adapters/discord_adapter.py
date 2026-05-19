@@ -19,7 +19,15 @@ from dotenv import load_dotenv
 # memory.py (Mem0's internal LLM picks anthropic vs openai by env).
 load_dotenv()
 
-from coterie.backends import BACKEND, Agent, Annotator, Digest, ProactiveClassifier, ProfileBuilder
+from coterie.backends import (
+    BACKEND,
+    Agent,
+    Annotator,
+    ChannelProfileBuilder,
+    Digest,
+    ProactiveClassifier,
+    ProfileBuilder,
+)
 from coterie.memory import BotMemory
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("dc-agent")
@@ -150,6 +158,7 @@ agent = Agent(memory=memory)
 annotator = Annotator(memory=memory)
 digest = Digest(memory=memory)
 profile_builder = ProfileBuilder(memory=memory)
+channel_profile_builder = ChannelProfileBuilder(memory=memory)
 proactive = ProactiveClassifier()
 
 
@@ -161,11 +170,12 @@ async def annotator_tick() -> None:
 @tasks.loop(seconds=600)
 async def profile_refresh_tick() -> None:
     """Every 10 min, walk every text channel the bot is in and rebuild any
-    profile whose author crossed the refresh threshold. The per-profile
+    profile (user or channel) whose threshold was crossed. The per-profile
     cooldown (1h) keeps cost bounded even with many channels."""
     for guild in client.guilds:
         for channel in guild.text_channels:
             await profile_builder.maybe_refresh_channel(str(channel.id))
+            await channel_profile_builder.maybe_refresh_channel(str(channel.id))
 
 
 # Per-channel record of when daily/weekly digest last ran successfully.
@@ -325,6 +335,7 @@ async def _proactive_dispatch(message: discord.Message) -> None:
     recent_msgs = annotator.recent_n(channel_id, n=10)
 
     asker_profile: str | None = None
+    channel_summary: str | None = None
     if PROFILES_ENABLED:
         try:
             asker_profile = await profile_builder.ensure(
@@ -333,11 +344,18 @@ async def _proactive_dispatch(message: discord.Message) -> None:
             )
         except Exception:
             log.exception("proactive: profile lookup failed")
+        try:
+            channel_summary = await channel_profile_builder.ensure(
+                channel_id=channel_id,
+            )
+        except Exception:
+            log.exception("proactive: channel profile lookup failed")
 
     decision = await proactive.evaluate(
         trigger_msg_text=message.content,
         asker=asker,
         asker_profile=asker_profile,
+        channel_summary=channel_summary,
         recent_msgs=recent_msgs,
     )
     if not decision or not decision.get("fire"):
@@ -362,6 +380,7 @@ async def _proactive_dispatch(message: discord.Message) -> None:
             channel_id=channel_id,
             asker=asker,
             asker_profile=asker_profile,
+            channel_summary=channel_summary,
             mode="proactive",
             recent_context=recent_msgs,
             prior_relevant=prior_relevant,
@@ -555,6 +574,7 @@ async def on_message(message: discord.Message) -> None:
 
     async with message.channel.typing():
         asker_profile: str | None = None
+        channel_summary: str | None = None
         if PROFILES_ENABLED:
             try:
                 asker_profile = await profile_builder.ensure(
@@ -563,12 +583,21 @@ async def on_message(message: discord.Message) -> None:
                 )
             except Exception:
                 log.exception("profile lookup failed")
+            # Skip channel summary for DMs — there is no channel to summarize.
+            if not isinstance(message.channel, discord.DMChannel):
+                try:
+                    channel_summary = await channel_profile_builder.ensure(
+                        channel_id=str(message.channel.id),
+                    )
+                except Exception:
+                    log.exception("channel profile lookup failed")
         try:
             reply_text, files = await agent.reply(
                 query=query,
                 channel_id=str(message.channel.id),
                 asker=message.author.display_name,
                 asker_profile=asker_profile,
+                channel_summary=channel_summary,
                 attachments=attachments_payload,
             )
         except Exception:
