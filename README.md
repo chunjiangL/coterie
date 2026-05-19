@@ -1,8 +1,10 @@
 # Coterie
 
 A bot for small chat communities. Runs on Discord or Slack. Maintains
-per-channel memory, fires daily and weekly digests, optionally chimes in
-on its own. One process. Behavior toggles through env vars.
+per-channel memory, builds per-user and per-channel profile blurbs,
+records reactions on its own messages as implicit feedback, fires daily
+and weekly digests, and optionally chimes in on its own. One process.
+Behavior toggles through env vars.
 
 ## Quick start
 
@@ -79,7 +81,7 @@ SUBSTANTIVE_TOPICS=model architecture, training, papers, datasets, ...
 RELEVANT_LINK_DOMAINS=arxiv, github, X.com, huggingface, ...
 
 # Feature toggles
-PROFILES_ENABLED=true    # per-user profile build + auto-refresh
+PROFILES_ENABLED=true    # per-user + per-channel profile build + auto-refresh
 ANNOTATOR_ENABLED=true   # sliding-window LLM annotations for retrieval
 
 # Digest. Fires 9am LA. Comma-separated channel IDs. Empty disables.
@@ -118,8 +120,8 @@ coterie/
   adapters/
     discord_adapter.py    discord.py event loop
     slack_adapter.py      slack_bolt Socket Mode
-  claude/                 Anthropic variants (agent, annotator, digest, proactive, user_profile)
-  gpt/                    OpenAI variants (same five)
+  claude/                 Anthropic variants (agent, annotator, channel_profile, digest, proactive, user_profile)
+  gpt/                    OpenAI variants (same six)
   backends.py             BACKEND env switch
   config.py               PLATFORM + COMMUNITY_* env + render()
   memory.py               Mem0 wrapper, partitioned per channel
@@ -136,14 +138,25 @@ substitutes `{platform}`, `{community_domain}`, and other placeholders
 into prompts at module load.
 
 Mem0 partitions by channel ID. Records carry a `record_type` tag:
-`message`, `annotation`, `agent_reply`, `profile`. The agent's
-`search_memories` tool drops `profile` records before returning, so one
-user's profile cannot leak into a reply to another.
+`message`, `annotation`, `agent_reply`, `profile`, `channel_profile`,
+`reaction`. The agent's `search_memories` drops `profile`,
+`channel_profile`, and `reaction` records before returning, so synthesized
+or signal-layer rows never leak back into a user-facing reply.
+
+When the bot replies, its user turn is split into one main block and up
+to four reference blocks: `<channel_summary>`, `<asker_profile>`,
+`<recent_chat>`, `<retrieved_memories>`, and finally
+`<untrusted_user_content>` (the message to respond to). The system prompt
+tells the model to treat the reference blocks as data and respond only
+to the last one. This is both an anti-injection defense and a way to
+keep context confusion down when many blocks pile up.
 
 ## CLI
 
 ```
 python scripts/init_profiles.py [channel_id ...]
+python -m coterie.claude.channel_profile <channel_id>
+python -m coterie.gpt.channel_profile <channel_id>
 python -m coterie.claude.digest <channel_id> [daily|weekly]
 python -m coterie.gpt.digest <channel_id> [daily|weekly]
 python scripts/dump_memory.py <channel_id>
