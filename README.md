@@ -92,6 +92,12 @@ DIGEST_CHANNELS=          # legacy fallback for both
 # Proactive (non-@ replies). Empty disables.
 PROACTIVE_CHANNELS=
 PROACTIVE_SERVERS=        # whole guild / workspace; channels auto-inherit
+
+# Cross-channel context. Channels listed here have their channel_profile
+# treated as "public knowledge" — every reply in every channel can read
+# them. Private channels never appear here and never leak. Empty (default)
+# = no cross-channel sharing.
+PUBLIC_CHANNELS=
 ```
 
 On the OpenAI backend, users can ask for the heavier model in a single

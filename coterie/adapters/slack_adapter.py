@@ -53,6 +53,7 @@ from coterie.backends import (
     ProactiveClassifier,
     ProfileBuilder,
 )
+from coterie.channel_ctx import build_channel_summary_block
 from coterie.memory import BotMemory
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -80,6 +81,7 @@ WEEKLY_DIGEST_CHANNELS = _csv_set("WEEKLY_DIGEST_CHANNELS") or _csv_set("DIGEST_
 DIGEST_CHANNELS = DAILY_DIGEST_CHANNELS | WEEKLY_DIGEST_CHANNELS
 PROACTIVE_CHANNELS = _csv_set("PROACTIVE_CHANNELS")
 PROACTIVE_SERVERS = _csv_set("PROACTIVE_SERVERS")  # Slack: team_id
+PUBLIC_CHANNELS = _csv_set("PUBLIC_CHANNELS")
 PROFILES_ENABLED = _bool_env("PROFILES_ENABLED", default=True)
 ANNOTATOR_ENABLED = _bool_env("ANNOTATOR_ENABLED", default=True)
 
@@ -280,9 +282,14 @@ async def _refresh_profiles_all_channels() -> None:
         return
     for ch in channels:
         cid = ch.get("id")
-        if cid:
-            await profile_builder.maybe_refresh_channel(cid)
-            await channel_profile_builder.maybe_refresh_channel(cid)
+        if not cid:
+            continue
+        await profile_builder.maybe_refresh_channel(cid)
+        if cid in PUBLIC_CHANNELS:
+            # Force first-build so the public summary exists for other
+            # channels to read, even before anyone @s the bot here.
+            await channel_profile_builder.ensure(channel_id=cid)
+        await channel_profile_builder.maybe_refresh_channel(cid)
 
 
 def _strip_mention(text: str) -> str:
@@ -297,6 +304,25 @@ def _strip_mention(text: str) -> str:
 # once per thread and cache for the bot's lifetime. Thread root authorship
 # can't change, so cache is safe.
 _thread_root_is_bot_cache: dict[str, bool] = {}
+
+# Slack channel-id → `#name`. Populated lazily; channel renames are rare
+# so we don't bother invalidating.
+_channel_name_cache: dict[str, str] = {}
+
+
+async def _channel_label(cid: str) -> str:
+    cached = _channel_name_cache.get(cid)
+    if cached is not None:
+        return cached
+    try:
+        resp = await app.client.conversations_info(channel=cid)
+        name = (resp.get("channel") or {}).get("name") or ""
+    except Exception:
+        log.exception("conversations.info failed for %s", cid)
+        name = ""
+    label = f"#{name}" if name else cid
+    _channel_name_cache[cid] = label
+    return label
 
 
 async def _thread_root_is_bot(channel: str, thread_ts: str) -> bool:
@@ -396,10 +422,12 @@ async def _handle_query(
             log.exception("profile lookup failed")
         # Skip channel summary for IM/DM channels — nothing to summarize.
         if not channel.startswith("D"):
-            try:
-                channel_summary = await channel_profile_builder.ensure(channel_id=channel)
-            except Exception:
-                log.exception("channel profile lookup failed")
+            channel_summary = await build_channel_summary_block(
+                current_channel_id=channel,
+                public_channel_ids=PUBLIC_CHANNELS,
+                builder=channel_profile_builder,
+                label_for_channel=_channel_label,
+            )
 
     try:
         reply_text, generated = await agent.reply(
@@ -501,10 +529,12 @@ async def _proactive_dispatch(channel: str, user: str, text: str, thread_ts: str
             asker_profile = await profile_builder.ensure(channel_id=channel, author=display)
         except Exception:
             log.exception("proactive: profile lookup failed")
-        try:
-            channel_summary = await channel_profile_builder.ensure(channel_id=channel)
-        except Exception:
-            log.exception("proactive: channel profile lookup failed")
+        channel_summary = await build_channel_summary_block(
+            current_channel_id=channel,
+            public_channel_ids=PUBLIC_CHANNELS,
+            builder=channel_profile_builder,
+            label_for_channel=_channel_label,
+        )
 
     decision = await proactive.evaluate(
         trigger_msg_text=text,
@@ -747,6 +777,13 @@ async def _main() -> None:
     log.info("annotator: %s, profiles: %s",
              "enabled" if ANNOTATOR_ENABLED else "disabled",
              "enabled" if PROFILES_ENABLED else "disabled")
+    if PUBLIC_CHANNELS:
+        log.info(
+            "public channels (cross-channel summary source): %s",
+            sorted(PUBLIC_CHANNELS),
+        )
+    else:
+        log.info("public channels: none (cross-channel summary disabled)")
 
     asyncio.create_task(_periodic_ticks())
     handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)

@@ -28,6 +28,7 @@ from coterie.backends import (
     ProactiveClassifier,
     ProfileBuilder,
 )
+from coterie.channel_ctx import build_channel_summary_block
 from coterie.memory import BotMemory
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("dc-agent")
@@ -70,6 +71,11 @@ PROACTIVE_CHANNELS: set[str] = _csv_set("PROACTIVE_CHANNELS")
 # Servers (Discord guilds) where the bot proactively participates in EVERY
 # text channel. PROACTIVE_CHANNELS works as an explicit override.
 PROACTIVE_SERVERS: set[str] = _csv_set("PROACTIVE_SERVERS")
+
+# Channels whose channel_profile is treated as "public knowledge" — every
+# other channel's reply path loads these summaries alongside its own. Empty
+# (default) = no cross-channel context. Never names private channels here.
+PUBLIC_CHANNELS: set[str] = _csv_set("PUBLIC_CHANNELS")
 
 # Feature toggles. Default ON (legacy behavior).
 # PROFILES: build + auto-refresh per-user profile from message history.
@@ -142,6 +148,16 @@ def _mention_should_block(channel_id: str, user_id: str) -> tuple[bool, bool]:
     return False, False
 
 
+async def _channel_label(cid: str) -> str:
+    """Return `#name` for a Discord channel ID, falling back to the ID."""
+    try:
+        ch = client.get_channel(int(cid))
+        name = getattr(ch, "name", None)
+        return f"#{name}" if name else cid
+    except (ValueError, AttributeError):
+        return cid
+
+
 def _proactive_channel_enabled(message: discord.Message) -> bool:
     if str(message.channel.id) in PROACTIVE_CHANNELS:
         return True
@@ -171,11 +187,18 @@ async def annotator_tick() -> None:
 async def profile_refresh_tick() -> None:
     """Every 10 min, walk every text channel the bot is in and rebuild any
     profile (user or channel) whose threshold was crossed. The per-profile
-    cooldown (1h) keeps cost bounded even with many channels."""
+    cooldown (1h) keeps cost bounded even with many channels.
+
+    PUBLIC_CHANNELS get an extra `ensure()` call so their channel_profile is
+    actively built (and stays available for other channels to read) even
+    when nobody is @-ing the bot inside the public channel itself."""
     for guild in client.guilds:
         for channel in guild.text_channels:
-            await profile_builder.maybe_refresh_channel(str(channel.id))
-            await channel_profile_builder.maybe_refresh_channel(str(channel.id))
+            cid = str(channel.id)
+            await profile_builder.maybe_refresh_channel(cid)
+            if cid in PUBLIC_CHANNELS:
+                await channel_profile_builder.ensure(channel_id=cid)
+            await channel_profile_builder.maybe_refresh_channel(cid)
 
 
 # Per-channel record of when daily/weekly digest last ran successfully.
@@ -344,12 +367,12 @@ async def _proactive_dispatch(message: discord.Message) -> None:
             )
         except Exception:
             log.exception("proactive: profile lookup failed")
-        try:
-            channel_summary = await channel_profile_builder.ensure(
-                channel_id=channel_id,
-            )
-        except Exception:
-            log.exception("proactive: channel profile lookup failed")
+        channel_summary = await build_channel_summary_block(
+            current_channel_id=channel_id,
+            public_channel_ids=PUBLIC_CHANNELS,
+            builder=channel_profile_builder,
+            label_for_channel=_channel_label,
+        )
 
     decision = await proactive.evaluate(
         trigger_msg_text=message.content,
@@ -433,6 +456,13 @@ async def on_ready() -> None:
         if not profile_refresh_tick.is_running():
             profile_refresh_tick.start()
         log.info("profiles: enabled (refresh tick every 10min)")
+        if PUBLIC_CHANNELS:
+            log.info(
+                "public channels (cross-channel summary source): %s",
+                sorted(PUBLIC_CHANNELS),
+            )
+        else:
+            log.info("public channels: none (cross-channel summary disabled)")
     else:
         log.info("profiles: disabled by PROFILES_ENABLED=false")
 
@@ -585,12 +615,12 @@ async def on_message(message: discord.Message) -> None:
                 log.exception("profile lookup failed")
             # Skip channel summary for DMs — there is no channel to summarize.
             if not isinstance(message.channel, discord.DMChannel):
-                try:
-                    channel_summary = await channel_profile_builder.ensure(
-                        channel_id=str(message.channel.id),
-                    )
-                except Exception:
-                    log.exception("channel profile lookup failed")
+                channel_summary = await build_channel_summary_block(
+                    current_channel_id=str(message.channel.id),
+                    public_channel_ids=PUBLIC_CHANNELS,
+                    builder=channel_profile_builder,
+                    label_for_channel=_channel_label,
+                )
         try:
             reply_text, files = await agent.reply(
                 query=query,
