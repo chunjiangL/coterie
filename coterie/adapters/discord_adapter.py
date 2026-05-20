@@ -315,24 +315,38 @@ async def _run_weekly_if_pending(now_la: _dt.datetime) -> None:
 
 @tasks.loop(time=DIGEST_TIME)
 async def daily_digest_tick() -> None:
-    await _run_daily_if_pending(_dt.datetime.now(LA))
+    try:
+        await _run_daily_if_pending(_dt.datetime.now(LA))
+    except Exception:
+        log.exception("daily_digest_tick crashed")
 
 
 @tasks.loop(time=DIGEST_TIME)
 async def weekly_digest_tick() -> None:
-    if _dt.datetime.now(LA).weekday() != 0:
-        return
-    await _run_weekly_if_pending(_dt.datetime.now(LA))
+    try:
+        if _dt.datetime.now(LA).weekday() != 0:
+            return
+        await _run_weekly_if_pending(_dt.datetime.now(LA))
+    except Exception:
+        log.exception("weekly_digest_tick crashed")
 
 
 @tasks.loop(minutes=10)
 async def digest_catchup_tick() -> None:
     """Backup for tasks.loop(time=...), which silently misses firings
     when macOS suspends the asyncio loop overnight. Runs every 10 min;
-    state file dedupes so this never double-posts."""
-    now = _dt.datetime.now(LA)
-    await _run_daily_if_pending(now)
-    await _run_weekly_if_pending(now)
+    state file dedupes so this never double-posts.
+
+    Outer try/except is belt-and-suspenders — inner per-channel calls
+    already catch their own errors, but if state-file IO or some other
+    edge case raises, we still don't want tasks.loop to die and stop
+    firing for the rest of the bot's life."""
+    try:
+        now = _dt.datetime.now(LA)
+        await _run_daily_if_pending(now)
+        await _run_weekly_if_pending(now)
+    except Exception:
+        log.exception("digest_catchup_tick crashed")
 
 
 async def _push_to_channel(channel_id: str, text: str) -> None:
