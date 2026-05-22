@@ -101,9 +101,13 @@ PROACTIVE_SERVERS=        # whole guild / workspace; channels auto-inherit
 PUBLIC_CHANNELS=
 ```
 
-On the OpenAI backend, users can ask for the heavier model in a single
-message by including "use pro", "pro mode", "think hard", or "best
-model". Proactive replies always run on the default.
+On the OpenAI backend, @-mention replies auto-route to GPT-5.5 Pro when
+the query looks substantive (≥100 chars, contains arxiv/github/huggingface
+URLs, has a code block, or asks multiple questions). Short pings stay on
+GPT-5.5. Override either way with explicit phrases — "use pro", "think
+hard", "best model" force Pro; "tldr", "quick", "short answer", "短答",
+"一句话" force default. Proactive (non-@) replies always run on the
+default model.
 
 ## Running
 

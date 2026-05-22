@@ -49,13 +49,63 @@ PRO_TRIGGER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Phrases that explicitly force back to the default model, overriding the
+# substantive-content heuristic below. Use for short factual lookups, quick
+# pings, "tldr" requests where pro would just be slow + expensive.
+QUICK_TRIGGER_RE = re.compile(
+    # ASCII triggers use \b; CJK terms don't (Python regex \b is ASCII-only,
+    # so \b before/after Chinese chars never matches).
+    r"\btl;?dr\b|\bquick(?:ly)?\b|\bshort\s+answer\b|"
+    r"简短|一句话|快点|短答",
+    re.IGNORECASE,
+)
+
+# Heuristic markers that a query is research-substantive enough to want pro.
+# Tuned for this community's typical @ messages: paper discussions, code,
+# multi-part questions. Bare "hi" or "在吗" stay on default.
+_RESEARCH_URL_RE = re.compile(
+    r"arxiv\.org|github\.com|huggingface\.co|x\.com/\w+/status|"
+    r"openreview|anthropic\.com|openai\.com/(?:blog|research)|deepmind",
+    re.IGNORECASE,
+)
+SUBSTANTIVE_MIN_CHARS = 100
+
 REASONING_EFFORT = "xhigh"
 MAX_TURNS = 12          # safety bound on agent loops
 
 
+def _looks_substantive(query: str) -> bool:
+    """Pure-text signals that a query likely wants deep reasoning."""
+    q = (query or "").strip()
+    if len(q) >= SUBSTANTIVE_MIN_CHARS:
+        return True
+    if _RESEARCH_URL_RE.search(q):
+        return True
+    if "```" in q:
+        return True
+    if q.count("?") + q.count("？") >= 2:
+        return True
+    return False
+
+
 def _pick_model(query: str) -> str:
-    """Return MODEL_PRO iff the query explicitly asks for pro; else default."""
-    if PRO_TRIGGER_RE.search(query or ""):
+    """Decide model per @-mention query.
+
+    Priority:
+      1. Explicit pro trigger wins (PRO_TRIGGER_RE) — user asked.
+      2. Explicit quick trigger forces default (QUICK_TRIGGER_RE).
+      3. Heuristic: substantive content (long / URL / code / multi-Q) → pro.
+      4. Otherwise default.
+
+    Proactive mode is forced to default at the call site, so this only
+    runs for actual @-mention / DM / reply-to-bot paths.
+    """
+    q = query or ""
+    if PRO_TRIGGER_RE.search(q):
+        return MODEL_PRO
+    if QUICK_TRIGGER_RE.search(q):
+        return MODEL_DEFAULT
+    if _looks_substantive(q):
         return MODEL_PRO
     return MODEL_DEFAULT
 
@@ -78,13 +128,16 @@ def _system_prompt(model_id: str) -> str:
 
 SYSTEM_PROMPT_TEMPLATE = config.render("""You are a helpful {platform} chat assistant for a community.
 
-You are powered by {model_display} (model ID: `{model_id}`). The default \
-backing model for this bot is GPT-5.5; users can request GPT-5.5 Pro by \
-including phrases like "use pro", "switch to pro", "think hard", or \
-"best model" in their message. If anyone asks what model you're running \
-on, answer with the model ID above (the one actually serving this \
-reply). Annotator and profile pipelines use GPT-5.5; Mem0's internal \
-LLM is GPT-4o-mini.
+You are powered by {model_display} (model ID: `{model_id}`). Routing for \
+@-mention replies: GPT-5.5 Pro fires automatically when the query looks \
+substantive (≥100 chars, contains an arxiv/github/huggingface URL, has a \
+code block, or asks multiple questions); short pings stay on GPT-5.5. \
+Users can also force the choice with explicit phrases — "use pro", \
+"think hard", "best model" → Pro; "tldr", "quick", "短答", "一句话" → \
+default. Proactive (non-@) replies always use the default. If anyone \
+asks what model you're running on, answer with the model ID above (the \
+one actually serving this reply). Annotator and profile pipelines use \
+GPT-5.5; Mem0's internal LLM is GPT-4o-mini.
 
 You have four tools — use the right one for the job. Reason about which is \
 needed before calling.
