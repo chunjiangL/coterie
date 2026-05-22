@@ -543,13 +543,18 @@ async def on_message(message: discord.Message) -> None:
         if (a.content_type or "").lower().startswith("application/pdf")
         or a.filename.lower().endswith(".pdf")
     ]
+    image_attachments = [
+        a for a in message.attachments
+        if (a.content_type or "").lower().startswith("image/")
+    ]
+    multimodal = pdf_attachments + image_attachments
 
-    if not message.content and not pdf_attachments:
+    if not message.content and not multimodal:
         return
 
     attachment_summary = (
-        " [attachments: " + ", ".join(a.filename for a in pdf_attachments) + "]"
-        if pdf_attachments else ""
+        " [attachments: " + ", ".join(a.filename for a in multimodal) + "]"
+        if multimodal else ""
     )
     full_content = (message.content or "") + attachment_summary
     timestamp_iso = message.created_at.isoformat()
@@ -617,12 +622,14 @@ async def on_message(message: discord.Message) -> None:
     if client.user is not None:
         query = query.replace(f"<@{client.user.id}>", "").replace(f"<@!{client.user.id}>", "")
     query = query.strip()
-    if not query and not pdf_attachments:
+    if not query and not multimodal:
         return
-    if not query and pdf_attachments:
+    if not query and multimodal:
         query = "Please take a look at this attachment."
 
-    attachments_payload = await _build_attachment_blocks(pdf_attachments)
+    attachments_payload = await _build_attachment_blocks(
+        pdf_attachments, image_attachments
+    )
 
     async with message.channel.typing():
         asker_profile: str | None = None
@@ -706,9 +713,19 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
         log.exception("memory.add_reaction failed")
 
 
+MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10MB; both Claude and OpenAI cap around here
+
+
 async def _build_attachment_blocks(
     pdfs: list[discord.Attachment],
+    images: list[discord.Attachment],
 ) -> list[dict[str, Any]]:
+    """Build backend-appropriate content blocks for PDFs and images.
+
+    Claude and OpenAI use different shapes for the same attachment; we
+    branch on BACKEND so the adapter stays platform-agnostic and each
+    agent module just `extend`s whatever we pass.
+    """
     blocks: list[dict[str, Any]] = []
     for att in pdfs:
         if att.size > MAX_PDF_BYTES:
@@ -719,16 +736,67 @@ async def _build_attachment_blocks(
         except Exception:
             log.exception("failed to download attachment %s", att.filename)
             continue
-        blocks.append({
+        block = _pdf_block(data=data, filename=att.filename)
+        if block is not None:
+            blocks.append(block)
+    for att in images:
+        if att.size > MAX_IMAGE_BYTES:
+            log.warning("skipping image %s (%d bytes, too large)", att.filename, att.size)
+            continue
+        try:
+            data = await att.read()
+        except Exception:
+            log.exception("failed to download image %s", att.filename)
+            continue
+        media_type = (att.content_type or "image/png").split(";")[0].strip().lower()
+        block = _image_block(
+            data=data, media_type=media_type, filename=att.filename
+        )
+        if block is not None:
+            blocks.append(block)
+    return blocks
+
+
+def _pdf_block(*, data: bytes, filename: str) -> dict[str, Any] | None:
+    b64 = base64.standard_b64encode(data).decode("ascii")
+    if BACKEND == "anthropic":
+        return {
             "type": "document",
             "source": {
                 "type": "base64",
                 "media_type": "application/pdf",
-                "data": base64.standard_b64encode(data).decode("ascii"),
+                "data": b64,
             },
-            "title": att.filename,
-        })
-    return blocks
+            "title": filename,
+        }
+    if BACKEND == "openai":
+        return {
+            "type": "input_file",
+            "filename": filename,
+            "file_data": f"data:application/pdf;base64,{b64}",
+        }
+    return None
+
+
+def _image_block(
+    *, data: bytes, media_type: str, filename: str
+) -> dict[str, Any] | None:
+    b64 = base64.standard_b64encode(data).decode("ascii")
+    if BACKEND == "anthropic":
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": b64,
+            },
+        }
+    if BACKEND == "openai":
+        return {
+            "type": "input_image",
+            "image_url": f"data:{media_type};base64,{b64}",
+        }
+    return None
 
 
 async def _send_reply(
