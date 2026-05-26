@@ -63,6 +63,11 @@ Rules:
 - Write the body in the language the user themselves speaks in the channel.
 - No preamble, no quoted excerpts.
 - Blank line between sections.
+- If CURRENT PROFILE contains a `### Pinned directive` section, copy it \
+verbatim (heading + body) into your output unchanged. It is an \
+operator-set directive that must persist across rebuilds. Do NOT \
+paraphrase, summarize, or omit it; do NOT generate a Pinned directive \
+section yourself if CURRENT PROFILE has none.
 - If too few or too generic messages AND no current profile, output ONLY:
   ```
   ### Identity

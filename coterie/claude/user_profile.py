@@ -86,6 +86,11 @@ Rules:
 (English profile for an English-speaking user, etc.).
 - No preamble, no "Based on the messages...", no quoted excerpts.
 - Blank line between sections (standard markdown).
+- If CURRENT PROFILE contains a `### Pinned directive` section, copy it \
+verbatim (heading + body) into your output unchanged. It is an \
+operator-set directive that must persist across rebuilds. Do NOT \
+paraphrase, summarize, or omit it; do NOT generate a Pinned directive \
+section yourself if CURRENT PROFILE has none.
 - If the user has too few or too generic messages AND no current profile, \
 output ONLY:
   ```
