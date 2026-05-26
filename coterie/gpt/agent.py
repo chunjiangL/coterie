@@ -18,6 +18,7 @@ next responses.create call.
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -69,15 +70,24 @@ MAX_TURNS = 12          # safety bound on agent loops
 # otherwise miss under URL/code/length heuristics.
 SHORT_QUERY_MAX_CHARS = 10
 
+# Channels in which auto-pro routing is DISABLED. Listed channel IDs stay
+# on the default model by default; explicit PRO_TRIGGER_RE still overrides.
+# Useful for high-traffic channels where pro is too slow / too expensive.
+NO_AUTO_PRO_CHANNELS: set[str] = {
+    c.strip() for c in (os.environ.get("NO_AUTO_PRO_CHANNELS") or "").split(",")
+    if c.strip()
+}
 
-def _pick_model(query: str) -> str:
+
+def _pick_model(query: str, channel_id: str | None = None) -> str:
     """Decide model per @-mention query.
 
     Priority:
       1. Explicit pro trigger wins (PRO_TRIGGER_RE) — user asked.
       2. Explicit quick trigger forces default (QUICK_TRIGGER_RE).
-      3. Very short query (≤10 chars) → default — chitchat.
-      4. Everything else → pro.
+      3. Channel in NO_AUTO_PRO_CHANNELS → default (no auto-pro).
+      4. Very short query (≤10 chars) → default — chitchat.
+      5. Everything else → pro.
 
     Rationale: this is a research community; @-mention queries that aren't
     chitchat are usually depth-worthy. Defaulting to pro over-spends on a
@@ -91,6 +101,8 @@ def _pick_model(query: str) -> str:
     if PRO_TRIGGER_RE.search(q):
         return MODEL_PRO
     if QUICK_TRIGGER_RE.search(q):
+        return MODEL_DEFAULT
+    if channel_id and channel_id in NO_AUTO_PRO_CHANNELS:
         return MODEL_DEFAULT
     if len(q) <= SHORT_QUERY_MAX_CHARS:
         return MODEL_DEFAULT
@@ -430,7 +442,10 @@ class Agent:
         # Pick model per-call. Default gpt-5.5; pro only when the user's @
         # message contains an explicit pro-trigger phrase. Proactive mode is
         # forced to the default since the user didn't request anything there.
-        model = _pick_model(query) if mode == "mention" else MODEL_DEFAULT
+        model = (
+            _pick_model(query, channel_id=channel_id)
+            if mode == "mention" else MODEL_DEFAULT
+        )
         instructions = _system_prompt(model)
         log.info(
             "agent: query from=%s model=%s query=%s",

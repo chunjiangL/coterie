@@ -105,8 +105,10 @@ On the OpenAI backend, @-mention replies default to GPT-5.5 Pro for
 anything beyond a short chitchat ping (≤10 chars like "在吗", "thanks"),
 which stays on GPT-5.5. Override either way with explicit phrases —
 "use pro", "think hard", "best model" force Pro; "tldr", "quick",
-"short answer", "短答", "一句话", "简短" force default. Proactive
-(non-@) replies always run on the default model.
+"short answer", "短答", "一句话", "简短" force default. Channels listed
+in `NO_AUTO_PRO_CHANNELS` opt out of auto-pro entirely (explicit "use
+pro" still escalates). Proactive (non-@) replies always run on the
+default model.
 
 ## Running
 
