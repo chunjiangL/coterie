@@ -94,13 +94,19 @@ def _pick_model(query: str, channel_id: str | None = None) -> str:
     minority of long-but-trivial questions, but those are rare and the user
     can override with "tldr"/"quick"/"一句话".
 
+    Triggers are checked only against the user's typed text, NOT against
+    inlined file content (which often contains incidental phrases like
+    "一句话" or "tldr" in a critique). The user_part is everything before
+    the `[Attached file:` marker that _inline_text_attachments emits.
+
     Proactive (non-@) mode is forced to default at the call site, so this
     only fires for @-mention / DM / reply-to-bot paths.
     """
     q = (query or "").strip()
-    if PRO_TRIGGER_RE.search(q):
+    user_part = q.split("[Attached file:", 1)[0].rstrip()
+    if PRO_TRIGGER_RE.search(user_part):
         return MODEL_PRO
-    if QUICK_TRIGGER_RE.search(q):
+    if QUICK_TRIGGER_RE.search(user_part):
         return MODEL_DEFAULT
     if channel_id and channel_id in NO_AUTO_PRO_CHANNELS:
         return MODEL_DEFAULT
