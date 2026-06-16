@@ -97,12 +97,57 @@ async def _fetch_single_message(
     return r.json()
 
 
+MAX_TEXT_BYTES = 200 * 1024
+
+_TEXT_EXTS = (
+    ".txt", ".md", ".json", ".csv", ".log", ".py", ".ts",
+    ".js", ".tsx", ".jsx", ".yaml", ".yml", ".toml", ".sh",
+)
+
+
+async def _inline_text_attachments(
+    client: httpx.AsyncClient, message: dict
+) -> str:
+    """Pull text attachments off a Discord message and format them as
+    inline-readable blocks. Same shape as the live adapter helper."""
+    chunks: list[str] = []
+    for att in message.get("attachments") or []:
+        ctype = (att.get("content_type") or "").lower()
+        filename = att.get("filename") or "file"
+        size = int(att.get("size") or 0)
+        url = att.get("url")
+        if not url:
+            continue
+        is_text = ctype.startswith("text/") or filename.lower().endswith(_TEXT_EXTS)
+        if not is_text:
+            continue
+        try:
+            r = await client.get(url, timeout=60)
+            r.raise_for_status()
+            data = r.content
+        except Exception:
+            log.exception("text attachment download failed: %s", filename)
+            continue
+        truncated = len(data) > MAX_TEXT_BYTES
+        text = data[:MAX_TEXT_BYTES].decode("utf-8", errors="replace")
+        suffix = f"\n[...truncated, original {size} bytes]" if truncated else ""
+        chunks.append(
+            f"[Attached file: {filename}]\n```\n{text}{suffix}\n```"
+        )
+        log.info(
+            "inlined text attachment %s (%d bytes%s)",
+            filename, len(data), " truncated" if truncated else "",
+        )
+    return "\n\n".join(chunks)
+
+
 async def _build_attachment_blocks(
     client: httpx.AsyncClient, message: dict
 ) -> list[dict[str, Any]]:
     """Download a Discord message's attachments and convert to backend-
     aware multimodal blocks. Mirrors discord_adapter._build_attachment_blocks
-    but works off REST payloads instead of discord.py models."""
+    but works off REST payloads instead of discord.py models. Text files
+    are handled separately via _inline_text_attachments."""
     from coterie.backends import BACKEND  # late import
 
     blocks: list[dict[str, Any]] = []
@@ -289,8 +334,11 @@ async def main() -> None:
             .strip()
         )
         attachment_blocks = await _build_attachment_blocks(client, last_user_msg)
-        if not query and attachment_blocks:
+        text_inlined = await _inline_text_attachments(client, last_user_msg)
+        if not query and (attachment_blocks or text_inlined):
             query = "Please take a look at this attachment."
+        if text_inlined:
+            query = f"{query}\n\n{text_inlined}"
         asker = (
             last_user_msg["author"].get("global_name")
             or last_user_msg["author"]["username"]

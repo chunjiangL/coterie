@@ -547,14 +547,27 @@ async def on_message(message: discord.Message) -> None:
         a for a in message.attachments
         if (a.content_type or "").lower().startswith("image/")
     ]
+    text_attachments = [
+        a for a in message.attachments
+        if a not in pdf_attachments
+        and a not in image_attachments
+        and (
+            (a.content_type or "").lower().startswith("text/")
+            or a.filename.lower().endswith((
+                ".txt", ".md", ".json", ".csv", ".log", ".py", ".ts",
+                ".js", ".tsx", ".jsx", ".yaml", ".yml", ".toml", ".sh",
+            ))
+        )
+    ]
     multimodal = pdf_attachments + image_attachments
+    any_attachment = multimodal + text_attachments
 
-    if not message.content and not multimodal:
+    if not message.content and not any_attachment:
         return
 
     attachment_summary = (
-        " [attachments: " + ", ".join(a.filename for a in multimodal) + "]"
-        if multimodal else ""
+        " [attachments: " + ", ".join(a.filename for a in any_attachment) + "]"
+        if any_attachment else ""
     )
     full_content = (message.content or "") + attachment_summary
     timestamp_iso = message.created_at.isoformat()
@@ -622,10 +635,16 @@ async def on_message(message: discord.Message) -> None:
     if client.user is not None:
         query = query.replace(f"<@{client.user.id}>", "").replace(f"<@!{client.user.id}>", "")
     query = query.strip()
-    if not query and not multimodal:
+    if not query and not any_attachment:
         return
-    if not query and multimodal:
+    if not query and any_attachment:
         query = "Please take a look at this attachment."
+
+    # Inline text attachments into the query — works on both backends and
+    # is more reliable than the input_file path for plain text.
+    text_inlined = await _inline_text_attachments(text_attachments)
+    if text_inlined:
+        query = f"{query}\n\n{text_inlined}"
 
     attachments_payload = await _build_attachment_blocks(
         pdf_attachments, image_attachments
@@ -714,6 +733,42 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
 
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10MB; both Claude and OpenAI cap around here
+MAX_TEXT_BYTES = 200 * 1024  # 200 KB per text file; larger gets truncated
+
+
+async def _inline_text_attachments(
+    text_files: list[discord.Attachment],
+) -> str:
+    """Download text attachments and format as inline-readable blocks.
+
+    Returns an empty string when there is nothing to inline. We embed the
+    content directly in the query so both backends see it natively, which
+    avoids the input_file/document round-trip that's flaky for plain text.
+    Oversized files are head-truncated with a note.
+    """
+    if not text_files:
+        return ""
+    chunks: list[str] = []
+    for att in text_files:
+        if att.size > MAX_TEXT_BYTES:
+            log.warning(
+                "text attachment %s is %d bytes; truncating to %d",
+                att.filename, att.size, MAX_TEXT_BYTES,
+            )
+        try:
+            data = await att.read()
+        except Exception:
+            log.exception("failed to download text attachment %s", att.filename)
+            continue
+        text = data[:MAX_TEXT_BYTES].decode("utf-8", errors="replace")
+        suffix = (
+            f"\n[...truncated, original {att.size} bytes]"
+            if att.size > MAX_TEXT_BYTES else ""
+        )
+        chunks.append(
+            f"[Attached file: {att.filename}]\n```\n{text}{suffix}\n```"
+        )
+    return "\n\n".join(chunks)
 
 
 async def _build_attachment_blocks(
