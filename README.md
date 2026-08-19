@@ -1,3 +1,5 @@
+
+
 # Coterie
 
 A bot for small chat communities. Runs on Discord or Slack. Maintains
@@ -173,6 +175,7 @@ python -m coterie.claude.digest <channel_id> [daily|weekly]
 python -m coterie.gpt.digest <channel_id> [daily|weekly]
 python scripts/dump_memory.py <channel_id>
 python scripts/verify_filter_search.py
+python scripts/backfill_recent.py <channel_id> [--since-minutes <minutes>] [--reply] [--target-message-id <msg_id>]
 ```
 
 ## License
